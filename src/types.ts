@@ -47,5 +47,8 @@ export interface ScheduleResponse {
 export interface PublicConfigResponse {
   storeName: string;
   showLoginHint: boolean;
+  needsBootstrap?: boolean;
+  isLocalFallback?: boolean;
+  kvNeedsBinding?: boolean;
   hintAccounts: Array<{ id: string; name: string; role: string; isAdmin: boolean }>;
 }

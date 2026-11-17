@@ -128,6 +128,7 @@ async function startServer(): Promise<void> {
 
   app.get('/api/public/config', async (_req, res) => {
     const db = await readStore();
+    const activeAdmins = db.employees.filter((e) => e.active && e.isAdmin);
     const hintAccounts = db.settings.showLoginHint
       ? db.employees
           .filter((e) => e.active)
@@ -142,8 +143,53 @@ async function startServer(): Promise<void> {
     res.json({
       storeName: db.settings.storeName,
       showLoginHint: db.settings.showLoginHint,
+      needsBootstrap: activeAdmins.length === 0,
       hintAccounts,
     });
+  });
+
+  // One-time bootstrap endpoint only usable when 0 active admins exist
+  app.post('/api/setup/bootstrap-admin', async (req, res) => {
+    const id = normalizeEmployeeId(req.body?.id);
+    const name = typeof req.body?.name === 'string' ? req.body.name.trim().slice(0, 24) : '';
+    if (!id || !isValidEmployeeId(id)) {
+      res.status(400).json({ error: '員工編號需為 2–16 碼英數字（可含 - 或 _）' });
+      return;
+    }
+    if (!name) {
+      res.status(400).json({ error: '請輸入管理員姓名' });
+      return;
+    }
+    try {
+      const created = await mutateStore((db) => {
+        if (db.employees.some((e) => e.active && e.isAdmin)) {
+          throw new Error('系統已存在管理員，請直接以管理員編號登入');
+        }
+        const existing = db.employees.find((e) => e.id === id);
+        if (existing) {
+          existing.name = name;
+          existing.isAdmin = true;
+          existing.active = true;
+          return existing;
+        }
+        const emp: Employee = {
+          id,
+          name,
+          role: '店長',
+          isAdmin: true,
+          weeklyLeaveLimit: 2,
+          active: true,
+          createdAt: new Date().toISOString(),
+        };
+        db.employees.push(emp);
+        return emp;
+      });
+      const token = await signToken(created.id);
+      res.status(201).json({ token, user: created });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : '建立管理員失敗';
+      res.status(400).json({ error: message });
+    }
   });
 
   app.post('/api/auth/login', async (req, res) => {
@@ -521,7 +567,10 @@ async function startServer(): Promise<void> {
     }
   });
 
-  if (process.env.NODE_ENV !== 'production') {
+  const isProduction =
+    process.env.NODE_ENV === 'production' || process.env.npm_lifecycle_event === 'start';
+
+  if (!isProduction) {
     const vite = await createViteServer({
       server: { middlewareMode: true },
       appType: 'spa',

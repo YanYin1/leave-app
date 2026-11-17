@@ -1,11 +1,11 @@
 import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
+import os from 'node:os';
 import path from 'node:path';
 import type { Employee, LeaveEntry, StoreDatabase, StoreSettings } from '../src/types.ts';
 
-const DATA_DIR = path.resolve(process.cwd(), 'data');
-const DB_FILE = path.join(DATA_DIR, 'store.json');
-const SECRET_FILE = path.join(DATA_DIR, '.auth_secret');
+const PRIMARY_DATA_DIR = path.resolve(process.cwd(), 'data');
+const FALLBACK_DATA_DIR = path.join(os.tmpdir(), 'shiftoff-data');
 
 function formatYMD(date: Date): string {
   const y = date.getFullYear();
@@ -27,7 +27,7 @@ function addDays(base: Date, days: number): string {
   return formatYMD(d);
 }
 
-function createInitialDatabase(): StoreDatabase {
+export function createInitialDatabase(): StoreDatabase {
   const nowIso = new Date().toISOString();
   const mon = getMonday(new Date());
 
@@ -120,57 +120,104 @@ function createInitialDatabase(): StoreDatabase {
 
 let writeChain: Promise<void> = Promise.resolve();
 let cachedSecret: string | null = null;
+let resolvedDataDir: string | null = null;
+let memoryFallbackDb: StoreDatabase | null = null;
 
-async function ensureDataDir(): Promise<void> {
-  await fs.mkdir(DATA_DIR, { recursive: true });
+async function getWritableDataDir(): Promise<string | null> {
+  if (resolvedDataDir) return resolvedDataDir;
+  for (const candidate of [PRIMARY_DATA_DIR, FALLBACK_DATA_DIR]) {
+    try {
+      await fs.mkdir(candidate, { recursive: true });
+      const probe = path.join(candidate, `.probe_${process.pid}_${Date.now()}`);
+      await fs.writeFile(probe, 'ok', 'utf8');
+      await fs.unlink(probe);
+      resolvedDataDir = candidate;
+      return candidate;
+    } catch {
+      // Try next directory
+    }
+  }
+  return null;
 }
 
 export async function getAuthSecret(): Promise<string> {
   if (cachedSecret) {
     return cachedSecret;
   }
-  await ensureDataDir();
-  try {
-    const existing = await fs.readFile(SECRET_FILE, 'utf8');
-    if (existing.trim().length >= 32) {
-      cachedSecret = existing.trim();
-      return cachedSecret;
+  const dir = await getWritableDataDir();
+  if (dir) {
+    const secretFile = path.join(dir, '.auth_secret');
+    try {
+      const existing = await fs.readFile(secretFile, 'utf8');
+      if (existing.trim().length >= 32) {
+        cachedSecret = existing.trim();
+        return cachedSecret;
+      }
+    } catch {
+      // Generate new secret below
     }
-  } catch {
-    // Generate new secret below
+    const secret = crypto.randomBytes(32).toString('hex');
+    try {
+      await fs.writeFile(secretFile, secret, 'utf8');
+    } catch {
+      // Keep in-memory secret if write fails
+    }
+    cachedSecret = secret;
+    return secret;
   }
-  const secret = crypto.randomBytes(32).toString('hex');
-  await fs.writeFile(SECRET_FILE, secret, 'utf8');
-  cachedSecret = secret;
-  return secret;
+  cachedSecret = crypto.randomBytes(32).toString('hex');
+  return cachedSecret;
+}
+
+function normalizeStore(parsed: StoreDatabase): StoreDatabase {
+  if (!parsed.settings) {
+    parsed.settings = createInitialDatabase().settings;
+  }
+  if (parsed.settings.lockNextWeekOnWednesday === undefined) {
+    parsed.settings.lockNextWeekOnWednesday = true;
+  }
+  if (!parsed.settings.roleDailyLimits || typeof parsed.settings.roleDailyLimits !== 'object') {
+    parsed.settings.roleDailyLimits = { 正職: 1, 工讀生: 2 };
+  }
+  if (!Array.isArray(parsed.employees)) {
+    parsed.employees = createInitialDatabase().employees;
+  }
+  if (!Array.isArray(parsed.leaves)) {
+    parsed.leaves = [];
+  }
+  return parsed;
 }
 
 export async function readStore(): Promise<StoreDatabase> {
-  await ensureDataDir();
-  try {
-    const raw = await fs.readFile(DB_FILE, 'utf8');
-    const parsed = JSON.parse(raw) as StoreDatabase;
-    if (parsed.settings) {
-      if (parsed.settings.lockNextWeekOnWednesday === undefined) {
-        parsed.settings.lockNextWeekOnWednesday = true;
-      }
-      if (!parsed.settings.roleDailyLimits || typeof parsed.settings.roleDailyLimits !== 'object') {
-        parsed.settings.roleDailyLimits = { 正職: 1, 工讀生: 2 };
-      }
+  const dir = await getWritableDataDir();
+  if (!dir) {
+    if (!memoryFallbackDb) {
+      memoryFallbackDb = createInitialDatabase();
     }
+    return memoryFallbackDb;
+  }
+  const dbFile = path.join(dir, 'store.json');
+  try {
+    const raw = await fs.readFile(dbFile, 'utf8');
+    const parsed = normalizeStore(JSON.parse(raw) as StoreDatabase);
+    memoryFallbackDb = parsed;
     return parsed;
   } catch {
     const initial = createInitialDatabase();
+    memoryFallbackDb = initial;
     await writeStoreDirect(initial);
     return initial;
   }
 }
 
 async function writeStoreDirect(data: StoreDatabase): Promise<void> {
-  await ensureDataDir();
-  const tmpFile = `${DB_FILE}.${process.pid}.${Date.now()}.tmp`;
+  memoryFallbackDb = data;
+  const dir = await getWritableDataDir();
+  if (!dir) return;
+  const dbFile = path.join(dir, 'store.json');
+  const tmpFile = `${dbFile}.${process.pid}.${Date.now()}.tmp`;
   await fs.writeFile(tmpFile, JSON.stringify(data, null, 2), 'utf8');
-  await fs.rename(tmpFile, DB_FILE);
+  await fs.rename(tmpFile, dbFile);
 }
 
 export async function mutateStore<T>(mutator: (db: StoreDatabase) => Promise<T> | T): Promise<T> {
