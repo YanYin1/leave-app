@@ -223,7 +223,7 @@ export function MyLeaveView({
                     <span className="font-mono font-semibold tabular-nums">
                       {formatShortDate(lockCutoffDate)}
                     </span>
-                    （週五 00:00）鎖定一般員工編輯，管理員仍可直接調整
+                    （週五 00:00）鎖定
                   </>
                 ) : (
                   <>
