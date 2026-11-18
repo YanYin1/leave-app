@@ -7,29 +7,43 @@ import type { Employee, LeaveEntry, StoreDatabase, StoreSettings } from '../src/
 const PRIMARY_DATA_DIR = path.resolve(process.cwd(), 'data');
 const FALLBACK_DATA_DIR = path.join(os.tmpdir(), 'shiftoff-data');
 
-function formatYMD(date: Date): string {
-  const y = date.getFullYear();
-  const m = String(date.getMonth() + 1).padStart(2, '0');
-  const d = String(date.getDate()).padStart(2, '0');
+export function getTaiwanTodayYMD(): string {
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Taipei',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).formatToParts(new Date());
+  const y = parts.find((p) => p.type === 'year')?.value ?? '2026';
+  const m = parts.find((p) => p.type === 'month')?.value ?? '01';
+  const d = parts.find((p) => p.type === 'day')?.value ?? '01';
   return `${y}-${m}-${d}`;
 }
 
-function getMonday(date: Date): Date {
-  const copy = new Date(date.getFullYear(), date.getMonth(), date.getDate());
-  const day = copy.getDay();
+function getMondayFromYMD(ymd: string): string {
+  const [y, m, d] = ymd.split('-').map(Number);
+  const dt = new Date(Date.UTC(y, m - 1, d));
+  const day = dt.getUTCDay();
   const diff = day === 0 ? -6 : 1 - day;
-  copy.setDate(copy.getDate() + diff);
-  return copy;
+  dt.setUTCDate(dt.getUTCDate() + diff);
+  const yy = dt.getUTCFullYear();
+  const mm = String(dt.getUTCMonth() + 1).padStart(2, '0');
+  const dd = String(dt.getUTCDate()).padStart(2, '0');
+  return `${yy}-${mm}-${dd}`;
 }
 
-function addDays(base: Date, days: number): string {
-  const d = new Date(base.getFullYear(), base.getMonth(), base.getDate() + days);
-  return formatYMD(d);
+function addDaysYMD(ymd: string, days: number): string {
+  const [y, m, d] = ymd.split('-').map(Number);
+  const dt = new Date(Date.UTC(y, m - 1, d + days));
+  const yy = dt.getUTCFullYear();
+  const mm = String(dt.getUTCMonth() + 1).padStart(2, '0');
+  const dd = String(dt.getUTCDate()).padStart(2, '0');
+  return `${yy}-${mm}-${dd}`;
 }
 
 export function createInitialDatabase(): StoreDatabase {
   const nowIso = new Date().toISOString();
-  const mon = getMonday(new Date());
+  const mon = getMondayFromYMD(getTaiwanTodayYMD());
 
   const employees: Employee[] = [
     {
@@ -71,7 +85,7 @@ export function createInitialDatabase(): StoreDatabase {
     {
       id: 'PT02',
       name: '王怡君',
-      role: '工讀生',
+      role: '計時員',
       isAdmin: false,
       weeklyLeaveLimit: 3,
       active: true,
@@ -92,7 +106,7 @@ export function createInitialDatabase(): StoreDatabase {
   ];
 
   const leaves: LeaveEntry[] = seedLeaves.map((item) => {
-    const date = addDays(mon, item.offset);
+    const date = addDaysYMD(mon, item.offset);
     return {
       id: `${item.empId}_${date}`,
       employeeId: item.empId,
@@ -104,15 +118,12 @@ export function createInitialDatabase(): StoreDatabase {
 
   const settings: StoreSettings = {
     storeName: '日和門市',
-    roles: ['店長', '副店長', '正職', '工讀生', '實習生'],
-    roleDailyLimits: {
-      正職: 1,
-      工讀生: 2,
-    },
+    roles: ['店長', '副店長', '正職', '工讀生', '計時員', '實習生'],
+    dailyMaxLeave: 2,
     maxDailyLeaveWarning: 3,
     allowEmployeesViewAll: true,
     showLoginHint: true,
-    lockNextWeekOnWednesday: true,
+    lockNextWeekOnFriday: true,
   };
 
   return { settings, employees, leaves };
@@ -169,23 +180,59 @@ export async function getAuthSecret(): Promise<string> {
   return cachedSecret;
 }
 
-function normalizeStore(parsed: StoreDatabase): StoreDatabase {
-  if (!parsed.settings) {
-    parsed.settings = createInitialDatabase().settings;
+function normalizeStore(raw: unknown): StoreDatabase {
+  const parsed = (raw && typeof raw === 'object' ? raw : {}) as Partial<StoreDatabase> & {
+    settings?: Partial<StoreSettings> & { lockNextWeekOnWednesday?: boolean };
+  };
+  const defaults = createInitialDatabase();
+  const rawSettings: Partial<StoreSettings> & { lockNextWeekOnWednesday?: boolean } =
+    parsed.settings ?? {};
+
+  const lockNextWeekOnFriday =
+    typeof rawSettings.lockNextWeekOnFriday === 'boolean'
+      ? rawSettings.lockNextWeekOnFriday
+      : typeof rawSettings.lockNextWeekOnWednesday === 'boolean'
+        ? rawSettings.lockNextWeekOnWednesday
+        : true;
+
+  const dailyMaxLeave =
+    typeof rawSettings.dailyMaxLeave === 'number' && Number.isFinite(rawSettings.dailyMaxLeave)
+      ? Math.max(0, Math.min(20, rawSettings.dailyMaxLeave))
+      : 2;
+
+  const roles =
+    Array.isArray(rawSettings.roles) && rawSettings.roles.length > 0
+      ? rawSettings.roles
+      : defaults.settings.roles;
+
+  if (!roles.includes('計時員')) {
+    roles.push('計時員');
   }
-  if (parsed.settings.lockNextWeekOnWednesday === undefined) {
-    parsed.settings.lockNextWeekOnWednesday = true;
-  }
-  if (!parsed.settings.roleDailyLimits || typeof parsed.settings.roleDailyLimits !== 'object') {
-    parsed.settings.roleDailyLimits = { 正職: 1, 工讀生: 2 };
-  }
-  if (!Array.isArray(parsed.employees)) {
-    parsed.employees = createInitialDatabase().employees;
-  }
-  if (!Array.isArray(parsed.leaves)) {
-    parsed.leaves = [];
-  }
-  return parsed;
+
+  const settings: StoreSettings = {
+    storeName: typeof rawSettings.storeName === 'string' && rawSettings.storeName.trim() ? rawSettings.storeName : defaults.settings.storeName,
+    roles,
+    dailyMaxLeave,
+    maxDailyLeaveWarning:
+      typeof rawSettings.maxDailyLeaveWarning === 'number'
+        ? rawSettings.maxDailyLeaveWarning
+        : defaults.settings.maxDailyLeaveWarning,
+    allowEmployeesViewAll:
+      typeof rawSettings.allowEmployeesViewAll === 'boolean'
+        ? rawSettings.allowEmployeesViewAll
+        : defaults.settings.allowEmployeesViewAll,
+    showLoginHint:
+      typeof rawSettings.showLoginHint === 'boolean'
+        ? rawSettings.showLoginHint
+        : defaults.settings.showLoginHint,
+    lockNextWeekOnFriday,
+  };
+
+  return {
+    settings,
+    employees: Array.isArray(parsed.employees) ? parsed.employees : defaults.employees,
+    leaves: Array.isArray(parsed.leaves) ? parsed.leaves : [],
+  };
 }
 
 export async function readStore(): Promise<StoreDatabase> {
@@ -199,7 +246,7 @@ export async function readStore(): Promise<StoreDatabase> {
   const dbFile = path.join(dir, 'store.json');
   try {
     const raw = await fs.readFile(dbFile, 'utf8');
-    const parsed = normalizeStore(JSON.parse(raw) as StoreDatabase);
+    const parsed = normalizeStore(JSON.parse(raw));
     memoryFallbackDb = parsed;
     return parsed;
   } catch {

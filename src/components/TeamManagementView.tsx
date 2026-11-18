@@ -55,11 +55,11 @@ export function TeamManagementView({ currentUser, onRosterUpdated }: TeamManagem
 
   // Settings Form
   const [storeNameInput, setStoreNameInput] = useState('');
-  const [roleDailyLimitsInput, setRoleDailyLimitsInput] = useState<Record<string, number>>({});
+  const [dailyMaxLeaveInput, setDailyMaxLeaveInput] = useState(2);
   const [warningThresholdInput, setWarningThresholdInput] = useState(3);
   const [allowPeerView, setAllowPeerView] = useState(true);
   const [showLoginHint, setShowLoginHint] = useState(true);
-  const [lockOnWednesday, setLockOnWednesday] = useState(true);
+  const [lockOnFriday, setLockOnFriday] = useState(true);
   const [newRoleTag, setNewRoleTag] = useState('');
   const [savingSettings, setSavingSettings] = useState(false);
 
@@ -70,11 +70,11 @@ export function TeamManagementView({ currentUser, onRosterUpdated }: TeamManagem
       setEmployees(data.employees);
       setSettings(data.settings);
       setStoreNameInput(data.settings.storeName);
-      setRoleDailyLimitsInput(data.settings.roleDailyLimits ?? { 正職: 1, 工讀生: 2 });
+      setDailyMaxLeaveInput(data.settings.dailyMaxLeave ?? 2);
       setWarningThresholdInput(data.settings.maxDailyLeaveWarning);
       setAllowPeerView(data.settings.allowEmployeesViewAll);
       setShowLoginHint(data.settings.showLoginHint);
-      setLockOnWednesday(data.settings.lockNextWeekOnWednesday ?? true);
+      setLockOnFriday(data.settings.lockNextWeekOnFriday ?? true);
       if (data.settings.roles.length > 0 && !data.settings.roles.includes(newRole)) {
         setNewRole(data.settings.roles[0]);
       }
@@ -96,7 +96,9 @@ export function TeamManagementView({ currentUser, onRosterUpdated }: TeamManagem
   }
 
   const rolesList = useMemo(() => {
-    const set = new Set<string>(settings?.roles ?? ['店長', '副店長', '正職', '工讀生', '實習生']);
+    const set = new Set<string>(
+      settings?.roles ?? ['店長', '副店長', '正職', '工讀生', '計時員', '實習生'],
+    );
     for (const emp of employees) {
       if (emp.role) set.add(emp.role);
     }
@@ -233,11 +235,11 @@ export function TeamManagementView({ currentUser, onRosterUpdated }: TeamManagem
     try {
       await updateSettings({
         storeName: storeNameInput.trim() || '門市',
-        roleDailyLimits: roleDailyLimitsInput,
+        dailyMaxLeave: dailyMaxLeaveInput,
         maxDailyLeaveWarning: warningThresholdInput,
         allowEmployeesViewAll: allowPeerView,
         showLoginHint,
-        lockNextWeekOnWednesday: lockOnWednesday,
+        lockNextWeekOnFriday: lockOnFriday,
       });
       await loadData();
       await onRosterUpdated();
@@ -288,11 +290,11 @@ export function TeamManagementView({ currentUser, onRosterUpdated }: TeamManagem
   const adminCount = employees.filter((e) => e.active && e.isAdmin).length;
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-4 sm:space-y-6">
       {/* Header Summary */}
-      <div className="bg-white border border-slate-200 rounded-xl p-5 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+      <div className="bg-white border border-slate-200 rounded-2xl p-4 sm:p-5 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
         <div>
-          <h2 className="text-xl font-bold text-slate-900">員工名單與管理員設定</h2>
+          <h2 className="text-lg sm:text-xl font-bold text-slate-900">員工名單與管理員設定</h2>
           <p className="text-sm text-slate-600 mt-1 tabular-nums">
             在職名單內共 <span className="font-semibold text-slate-900">{activeCount}</span> 人
             <span aria-hidden="true"> · </span>
@@ -304,19 +306,19 @@ export function TeamManagementView({ currentUser, onRosterUpdated }: TeamManagem
       </div>
 
       {errorMsg && (
-        <div role="alert" className="text-sm text-red-700 bg-red-50 border border-red-200 rounded-lg px-4 py-3">
+        <div role="alert" className="text-sm text-red-700 bg-red-50 border border-red-200 rounded-xl px-4 py-3">
           {errorMsg}
         </div>
       )}
       {successMsg && (
-        <div role="status" className="text-sm text-teal-800 bg-teal-50 border border-teal-200 rounded-lg px-4 py-3 flex items-center gap-2">
+        <div role="status" className="text-sm text-teal-800 bg-teal-50 border border-teal-200 rounded-xl px-4 py-3 flex items-center gap-2">
           <Check className="w-4 h-4 shrink-0" />
           <span>{successMsg}</span>
         </div>
       )}
 
       {/* Add Employee Card */}
-      <div className="bg-white border border-slate-200 rounded-xl p-5">
+      <div className="bg-white border border-slate-200 rounded-2xl p-4 sm:p-5">
         <div className="flex items-center gap-2 mb-4">
           <UserPlus className="w-4 h-4 text-teal-700" />
           <h3 className="text-base font-semibold text-slate-900">新增員工</h3>
@@ -335,7 +337,7 @@ export function TeamManagementView({ currentUser, onRosterUpdated }: TeamManagem
               value={newId}
               onChange={(e) => setNewId(e.target.value.toUpperCase())}
               placeholder="例如 E003、PT03"
-              className="w-full px-3 py-2 text-sm font-mono uppercase bg-white border border-slate-300 rounded-lg text-slate-900 placeholder:normal-case placeholder:font-sans focus:outline-none focus:border-teal-700"
+              className="w-full min-h-[44px] px-3 py-2 text-sm font-mono uppercase bg-white border border-slate-300 rounded-xl text-slate-900 placeholder:normal-case placeholder:font-sans focus:outline-none focus:border-teal-700"
             />
           </div>
 
@@ -351,7 +353,7 @@ export function TeamManagementView({ currentUser, onRosterUpdated }: TeamManagem
               value={newName}
               onChange={(e) => setNewName(e.target.value)}
               placeholder="例如 周雅婷"
-              className="w-full px-3 py-2 text-sm bg-white border border-slate-300 rounded-lg text-slate-900 focus:outline-none focus:border-teal-700"
+              className="w-full min-h-[44px] px-3 py-2 text-sm bg-white border border-slate-300 rounded-xl text-slate-900 focus:outline-none focus:border-teal-700"
             />
           </div>
 
@@ -377,7 +379,7 @@ export function TeamManagementView({ currentUser, onRosterUpdated }: TeamManagem
                 value={customRoleInput}
                 onChange={(e) => setCustomRoleInput(e.target.value)}
                 placeholder="輸入新職位名稱"
-                className="w-full px-3 py-2 text-sm bg-white border border-slate-300 rounded-lg text-slate-900 focus:outline-none focus:border-teal-700"
+                className="w-full min-h-[44px] px-3 py-2 text-sm bg-white border border-slate-300 rounded-xl text-slate-900 focus:outline-none focus:border-teal-700"
               />
             ) : (
               <select
@@ -386,10 +388,10 @@ export function TeamManagementView({ currentUser, onRosterUpdated }: TeamManagem
                 onChange={(e) => {
                   const val = e.target.value;
                   setNewRole(val);
-                  if (val.includes('工讀')) setNewLimit(3);
+                  if (val.includes('工讀') || val.includes('計時')) setNewLimit(3);
                   else setNewLimit(2);
                 }}
-                className="w-full px-3 py-2 text-sm bg-white border border-slate-300 rounded-lg text-slate-900 focus:outline-none focus:border-teal-700"
+                className="w-full min-h-[44px] px-3 py-2 text-sm bg-white border border-slate-300 rounded-xl text-slate-900 focus:outline-none focus:border-teal-700"
               >
                 {rolesList.map((r) => (
                   <option key={r} value={r}>
@@ -408,7 +410,7 @@ export function TeamManagementView({ currentUser, onRosterUpdated }: TeamManagem
               id="new-emp-limit"
               value={newLimit}
               onChange={(e) => setNewLimit(Number(e.target.value))}
-              className="w-full px-3 py-2 text-sm font-mono bg-white border border-slate-300 rounded-lg text-slate-900 focus:outline-none focus:border-teal-700"
+              className="w-full min-h-[44px] px-3 py-2 text-sm font-mono bg-white border border-slate-300 rounded-xl text-slate-900 focus:outline-none focus:border-teal-700"
             >
               <option value={0}>不限</option>
               <option value={1}>1 天</option>
@@ -419,7 +421,7 @@ export function TeamManagementView({ currentUser, onRosterUpdated }: TeamManagem
             </select>
           </div>
 
-          <div className="flex items-center h-[38px]">
+          <div className="flex items-center min-h-[44px]">
             <label className="inline-flex items-center gap-2 text-sm text-slate-800 cursor-pointer select-none">
               <input
                 type="checkbox"
@@ -435,7 +437,7 @@ export function TeamManagementView({ currentUser, onRosterUpdated }: TeamManagem
             <button
               type="submit"
               disabled={adding}
-              className="w-full inline-flex items-center justify-center gap-1.5 py-2 px-4 bg-teal-700 hover:bg-teal-800 disabled:bg-teal-400 text-white text-sm font-semibold rounded-lg transition-colors cursor-pointer whitespace-nowrap"
+              className="w-full min-h-[44px] inline-flex items-center justify-center gap-1.5 py-2 px-4 bg-teal-700 hover:bg-teal-800 disabled:bg-teal-400 text-white text-sm font-semibold rounded-xl transition-colors cursor-pointer whitespace-nowrap"
             >
               <Plus className="w-4 h-4" />
               <span>{adding ? '新增中...' : '加入名單'}</span>
@@ -444,8 +446,8 @@ export function TeamManagementView({ currentUser, onRosterUpdated }: TeamManagem
         </form>
       </div>
 
-      {/* Employee Roster Table */}
-      <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
+      {/* Employee Roster Card (Mobile Cards + Desktop Table) */}
+      <div className="bg-white border border-slate-200 rounded-2xl overflow-hidden">
         <div className="p-4 border-b border-slate-100 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
           <div className="relative flex-1 max-w-xs">
             <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
@@ -454,15 +456,15 @@ export function TeamManagementView({ currentUser, onRosterUpdated }: TeamManagem
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               placeholder="搜尋編號或姓名..."
-              className="w-full pl-9 pr-3 py-1.5 text-sm bg-slate-50 border border-slate-200 rounded-lg text-slate-900 focus:bg-white focus:outline-none focus:border-teal-700"
+              className="w-full min-h-[40px] pl-9 pr-3 py-1.5 text-sm bg-slate-50 border border-slate-200 rounded-xl text-slate-900 focus:bg-white focus:outline-none focus:border-teal-700"
             />
           </div>
 
-          <div className="flex flex-wrap items-center gap-1.5">
+          <div className="flex items-center gap-1.5 overflow-x-auto pb-1 sm:pb-0">
             <button
               type="button"
               onClick={() => setRoleFilter('ALL')}
-              className={`px-2.5 py-1 text-xs font-medium rounded-md transition-colors cursor-pointer ${
+              className={`min-h-[34px] px-3 py-1 text-xs font-medium rounded-lg transition-colors cursor-pointer whitespace-nowrap shrink-0 ${
                 roleFilter === 'ALL'
                   ? 'bg-slate-900 text-white'
                   : 'bg-slate-100 text-slate-600 hover:text-slate-900'
@@ -475,7 +477,7 @@ export function TeamManagementView({ currentUser, onRosterUpdated }: TeamManagem
                 key={r}
                 type="button"
                 onClick={() => setRoleFilter(r)}
-                className={`px-2.5 py-1 text-xs font-medium rounded-md transition-colors cursor-pointer ${
+                className={`min-h-[34px] px-3 py-1 text-xs font-medium rounded-lg transition-colors cursor-pointer whitespace-nowrap shrink-0 ${
                   roleFilter === r
                     ? 'bg-slate-900 text-white'
                     : 'bg-slate-100 text-slate-600 hover:text-slate-900'
@@ -487,7 +489,126 @@ export function TeamManagementView({ currentUser, onRosterUpdated }: TeamManagem
           </div>
         </div>
 
-        <div className="overflow-x-auto">
+        {/* Mobile Touch Cards (< md) */}
+        <div className="md:hidden divide-y divide-slate-100">
+          {loading ? (
+            <div className="py-10 text-center text-sm text-slate-400">載入名單中...</div>
+          ) : filteredEmployees.length === 0 ? (
+            <div className="py-10 text-center text-sm text-slate-500">沒有符合條件的員工資料</div>
+          ) : (
+            filteredEmployees.map((emp) => {
+              const isSelf = emp.id === currentUser.id;
+              const isBusy = savingEmpId === emp.id;
+
+              return (
+                <div
+                  key={emp.id}
+                  className={`p-4 space-y-3 ${!emp.active ? 'opacity-65 bg-slate-50/40' : ''}`}
+                >
+                  <div className="flex items-start justify-between gap-3">
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <span className="font-mono text-xs font-bold text-teal-800 bg-teal-50 border border-teal-200 px-2 py-0.5 rounded tabular-nums">
+                          {emp.id}
+                        </span>
+                        <span className="text-base font-semibold text-slate-900">{emp.name}</span>
+                        {isSelf && (
+                          <span className="text-xs font-medium text-teal-700">(目前登入)</span>
+                        )}
+                      </div>
+                      <div className="text-xs text-slate-500 mt-1 tabular-nums">
+                        {emp.role} · 週休建議 {emp.weeklyLeaveLimit > 0 ? `${emp.weeklyLeaveLimit} 天` : '不限'}
+                      </div>
+                    </div>
+
+                    <button
+                      type="button"
+                      onClick={() => startEdit(emp)}
+                      className="min-w-[40px] min-h-[40px] flex items-center justify-center text-slate-500 hover:text-slate-900 bg-slate-100 rounded-xl cursor-pointer"
+                      aria-label={`編輯 ${emp.name}`}
+                    >
+                      <Edit2 className="w-4 h-4" />
+                    </button>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-2">
+                    <button
+                      type="button"
+                      disabled={isBusy}
+                      onClick={() => handleToggleAdmin(emp)}
+                      className={`min-h-[42px] inline-flex items-center justify-center gap-1.5 px-3 py-2 text-xs font-semibold rounded-xl border transition-colors cursor-pointer ${
+                        emp.isAdmin
+                          ? 'bg-teal-50 border-teal-200 text-teal-800'
+                          : 'bg-white border-slate-200 text-slate-600'
+                      }`}
+                    >
+                      {emp.isAdmin ? (
+                        <>
+                          <Shield className="w-3.5 h-3.5" />
+                          <span>管理員</span>
+                        </>
+                      ) : (
+                        <>
+                          <ShieldOff className="w-3.5 h-3.5 text-slate-400" />
+                          <span>設為管理員</span>
+                        </>
+                      )}
+                    </button>
+
+                    <button
+                      type="button"
+                      disabled={isBusy || isSelf}
+                      onClick={() => handleToggleActive(emp)}
+                      className={`min-h-[42px] px-3 py-2 text-xs font-medium rounded-xl border transition-colors ${
+                        emp.active
+                          ? 'bg-white border-slate-200 text-slate-700'
+                          : 'bg-red-50 border-red-200 text-red-700'
+                      } ${isSelf ? 'opacity-60 cursor-not-allowed' : 'cursor-pointer'}`}
+                    >
+                      {emp.active ? '啟用中' : '已停用'}
+                    </button>
+                  </div>
+
+                  {!isSelf && (
+                    <div>
+                      {confirmDeleteId === emp.id ? (
+                        <div className="flex items-center gap-2">
+                          <button
+                            type="button"
+                            disabled={isBusy}
+                            onClick={() => handleDeleteEmployee(emp)}
+                            className="flex-1 min-h-[40px] px-3 py-1.5 text-xs font-semibold text-white bg-red-600 hover:bg-red-700 rounded-xl cursor-pointer"
+                          >
+                            確定刪除 {emp.name}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setConfirmDeleteId(null)}
+                            className="min-h-[40px] px-4 py-1.5 text-xs text-slate-600 bg-slate-100 hover:bg-slate-200 rounded-xl cursor-pointer"
+                          >
+                            取消
+                          </button>
+                        </div>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => setConfirmDeleteId(emp.id)}
+                          className="w-full min-h-[38px] text-xs text-slate-400 hover:text-red-600 py-1.5 flex items-center justify-center gap-1 cursor-pointer"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                          <span>刪除員工</span>
+                        </button>
+                      )}
+                    </div>
+                  )}
+                </div>
+              );
+            })
+          )}
+        </div>
+
+        {/* Desktop Table (>= md) */}
+        <div className="hidden md:block overflow-x-auto">
           <table className="w-full border-collapse text-left">
             <thead>
               <tr className="border-b border-slate-200 bg-slate-50/70 text-xs font-semibold text-slate-600">
@@ -602,7 +723,7 @@ export function TeamManagementView({ currentUser, onRosterUpdated }: TeamManagem
                               type="button"
                               onClick={() => startEdit(emp)}
                               className="p-1.5 text-slate-500 hover:text-slate-900 hover:bg-slate-100 rounded-md transition-colors cursor-pointer"
-                              title="編輯姓名與職位"
+                              title="編輯編號、姓名與職位"
                               aria-label={`編輯 ${emp.name}`}
                             >
                               <Edit2 className="w-4 h-4" />
@@ -631,7 +752,7 @@ export function TeamManagementView({ currentUser, onRosterUpdated }: TeamManagem
       </div>
 
       {/* Store & Role Configuration */}
-      <div className="bg-white border border-slate-200 rounded-xl p-5">
+      <div className="bg-white border border-slate-200 rounded-2xl p-4 sm:p-5">
         <div className="flex items-center gap-2 mb-4">
           <Settings className="w-4 h-4 text-teal-700" />
           <h3 className="text-base font-semibold text-slate-900">門市規則與常用職位設定</h3>
@@ -649,51 +770,36 @@ export function TeamManagementView({ currentUser, onRosterUpdated }: TeamManagem
                 maxLength={30}
                 value={storeNameInput}
                 onChange={(e) => setStoreNameInput(e.target.value)}
-                className="w-full px-3 py-2 text-sm bg-white border border-slate-300 rounded-lg text-slate-900 focus:outline-none focus:border-teal-700"
+                className="w-full min-h-[44px] px-3 py-2 text-sm bg-white border border-slate-300 rounded-xl text-slate-900 focus:outline-none focus:border-teal-700"
               />
             </div>
 
             <div>
-              <div className="text-xs font-semibold text-slate-700 mb-2">
-                每日各職位可排休人數上限（分開設定）
-              </div>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 bg-slate-50 border border-slate-200 rounded-lg p-3">
-                {rolesList.map((role) => {
-                  const val = roleDailyLimitsInput[role] ?? 0;
-                  return (
-                    <div key={role} className="flex items-center justify-between gap-2 bg-white border border-slate-200 rounded-md px-3 py-2">
-                      <span className="text-xs font-semibold text-slate-800 truncate">{role}</span>
-                      <select
-                        aria-label={`${role} 每日可排休人數上限`}
-                        value={val}
-                        onChange={(e) => {
-                          const nextVal = Number(e.target.value);
-                          setRoleDailyLimitsInput((prev) => ({
-                            ...prev,
-                            [role]: nextVal,
-                          }));
-                        }}
-                        className="px-2 py-1 text-xs font-mono bg-white border border-slate-300 rounded text-slate-900 focus:outline-none focus:border-teal-700"
-                      >
-                        <option value={0}>不限</option>
-                        <option value={1}>每日最多 1 位</option>
-                        <option value={2}>每日最多 2 位</option>
-                        <option value={3}>每日最多 3 位</option>
-                        <option value={4}>每日最多 4 位</option>
-                        <option value={5}>每日最多 5 位</option>
-                      </select>
-                    </div>
-                  );
-                })}
-              </div>
-              <p className="text-[11px] text-slate-500 mt-1.5">
-                一般員工排休受該職位每日上限限制；管理員代劃或調整時不受限制。
+              <label htmlFor="daily-max-leave-select" className="block text-xs font-semibold text-slate-700 mb-1.5">
+                每日全店可排休人數上限（包含正職與計時員）
+              </label>
+              <select
+                id="daily-max-leave-select"
+                value={dailyMaxLeaveInput}
+                onChange={(e) => setDailyMaxLeaveInput(Number(e.target.value))}
+                className="w-full sm:w-64 min-h-[44px] px-3 py-2 text-sm font-mono bg-white border border-slate-300 rounded-xl text-slate-900 focus:outline-none focus:border-teal-700"
+              >
+                <option value={0}>不限人數</option>
+                <option value={1}>每日最多 1 位</option>
+                <option value={2}>每日最多 2 位（預設）</option>
+                <option value={3}>每日最多 3 位</option>
+                <option value={4}>每日最多 4 位</option>
+                <option value={5}>每日最多 5 位</option>
+                <option value={6}>每日最多 6 位</option>
+              </select>
+              <p className="text-[11px] text-slate-500 mt-1.5 leading-relaxed">
+                一般員工（含正職、工讀生、計時員）當日合計滿額後即無法點選；僅管理員可於總覽頁面手動加劃第 {(dailyMaxLeaveInput || 2) + 1} 位以上人員。
               </p>
             </div>
 
             <div>
               <label htmlFor="warning-threshold-input" className="block text-xs font-semibold text-slate-700 mb-1.5">
-                單日總休假人數提醒門檻（超過此總人數顯示人力留意）
+                單日總休假人數提醒門檻（超過此人數顯示人力留意）
               </label>
               <input
                 id="warning-threshold-input"
@@ -702,37 +808,37 @@ export function TeamManagementView({ currentUser, onRosterUpdated }: TeamManagem
                 max={20}
                 value={warningThresholdInput}
                 onChange={(e) => setWarningThresholdInput(Number(e.target.value))}
-                className="w-32 px-3 py-2 text-sm font-mono tabular-nums bg-white border border-slate-300 rounded-lg text-slate-900 focus:outline-none focus:border-teal-700"
+                className="w-32 min-h-[44px] px-3 py-2 text-sm font-mono tabular-nums bg-white border border-slate-300 rounded-xl text-slate-900 focus:outline-none focus:border-teal-700"
               />
             </div>
 
-            <div className="space-y-2.5 pt-1">
-              <label className="flex items-center gap-2.5 text-sm text-slate-800 cursor-pointer">
+            <div className="space-y-3 pt-1">
+              <label className="flex items-start gap-2.5 text-sm text-slate-800 cursor-pointer">
                 <input
                   type="checkbox"
-                  checked={lockOnWednesday}
-                  onChange={(e) => setLockOnWednesday(e.target.checked)}
-                  className="w-4 h-4 rounded border-slate-300 text-teal-700 focus:ring-teal-600"
+                  checked={lockOnFriday}
+                  onChange={(e) => setLockOnFriday(e.target.checked)}
+                  className="w-4 h-4 mt-0.5 rounded border-slate-300 text-teal-700 focus:ring-teal-600"
                 />
-                <span>每週三自動鎖定下週劃假（一般員工無法自行異動，管理員仍可調整）</span>
+                <span>每週五 00:00 自動鎖定下週劃假（一般員工無法自行異動，管理員仍可調整）</span>
               </label>
 
-              <label className="flex items-center gap-2.5 text-sm text-slate-800 cursor-pointer">
+              <label className="flex items-start gap-2.5 text-sm text-slate-800 cursor-pointer">
                 <input
                   type="checkbox"
                   checked={allowPeerView}
                   onChange={(e) => setAllowPeerView(e.target.checked)}
-                  className="w-4 h-4 rounded border-slate-300 text-teal-700 focus:ring-teal-600"
+                  className="w-4 h-4 mt-0.5 rounded border-slate-300 text-teal-700 focus:ring-teal-600"
                 />
                 <span>允許一般員工在週總覽查看其他同事的劃假名字</span>
               </label>
 
-              <label className="flex items-center gap-2.5 text-sm text-slate-800 cursor-pointer">
+              <label className="flex items-start gap-2.5 text-sm text-slate-800 cursor-pointer">
                 <input
                   type="checkbox"
                   checked={showLoginHint}
                   onChange={(e) => setShowLoginHint(e.target.checked)}
-                  className="w-4 h-4 rounded border-slate-300 text-teal-700 focus:ring-teal-600"
+                  className="w-4 h-4 mt-0.5 rounded border-slate-300 text-teal-700 focus:ring-teal-600"
                 />
                 <span>在登入頁面顯示快速登入名單提示（正式使用建議關閉）</span>
               </label>
@@ -741,7 +847,7 @@ export function TeamManagementView({ currentUser, onRosterUpdated }: TeamManagem
             <button
               type="submit"
               disabled={savingSettings}
-              className="px-4 py-2 bg-slate-900 hover:bg-slate-800 disabled:bg-slate-400 text-white text-sm font-semibold rounded-lg transition-colors cursor-pointer whitespace-nowrap"
+              className="w-full sm:w-auto min-h-[44px] px-5 py-2.5 bg-slate-900 hover:bg-slate-800 disabled:bg-slate-400 text-white text-sm font-semibold rounded-xl transition-colors cursor-pointer whitespace-nowrap"
             >
               {savingSettings ? '儲存中...' : '儲存門市設定'}
             </button>
@@ -751,13 +857,13 @@ export function TeamManagementView({ currentUser, onRosterUpdated }: TeamManagem
           <div className="space-y-4">
             <div>
               <h4 className="text-xs font-semibold text-slate-700 mb-2">
-                店內職位選項清單（如：正職、工讀生、店長）
+                店內職位選項清單（如：正職、工讀生、計時員、店長）
               </h4>
               <div className="flex flex-wrap gap-2">
                 {(settings?.roles ?? []).map((role) => (
                   <div
                     key={role}
-                    className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-slate-50 border border-slate-200 rounded-lg text-xs font-medium text-slate-800"
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-medium text-slate-800"
                   >
                     <span>{role}</span>
                     {(settings?.roles.length ?? 0) > 1 && (
@@ -788,14 +894,14 @@ export function TeamManagementView({ currentUser, onRosterUpdated }: TeamManagem
                     void handleAddRoleTag();
                   }
                 }}
-                placeholder="新增職位名稱，例如：早班正職"
-                className="flex-1 px-3 py-2 text-sm bg-white border border-slate-300 rounded-lg text-slate-900 focus:outline-none focus:border-teal-700"
+                placeholder="新增職位名稱，例如：早班計時員"
+                className="flex-1 min-h-[44px] px-3 py-2 text-sm bg-white border border-slate-300 rounded-xl text-slate-900 focus:outline-none focus:border-teal-700"
               />
               <button
                 type="button"
                 disabled={!newRoleTag.trim() || savingSettings}
                 onClick={handleAddRoleTag}
-                className="px-4 py-2 bg-white hover:bg-slate-50 border border-slate-300 text-slate-800 text-sm font-medium rounded-lg transition-colors cursor-pointer whitespace-nowrap"
+                className="min-h-[44px] px-4 py-2 bg-white hover:bg-slate-50 border border-slate-300 text-slate-800 text-sm font-medium rounded-xl transition-colors cursor-pointer whitespace-nowrap"
               >
                 新增職位
               </button>
@@ -807,11 +913,11 @@ export function TeamManagementView({ currentUser, onRosterUpdated }: TeamManagem
       {/* Edit Employee Modal */}
       {editingEmp && (
         <div
-          className="fixed inset-0 z-50 bg-slate-900/40 backdrop-blur-[1px] flex items-center justify-center p-4"
+          className="fixed inset-0 z-50 bg-slate-900/40 backdrop-blur-[1px] flex items-end sm:items-center justify-center p-0 sm:p-4"
           role="dialog"
           aria-modal="true"
         >
-          <div className="bg-white border border-slate-200 rounded-xl w-full max-w-md shadow-lg overflow-hidden">
+          <div className="bg-white border border-slate-200 rounded-t-2xl sm:rounded-2xl w-full max-w-md max-h-[90dvh] overflow-y-auto shadow-lg pb-[env(safe-area-inset-bottom)]">
             <div className="px-5 py-4 border-b border-slate-100 flex items-center justify-between">
               <div>
                 <h3 className="text-base font-semibold text-slate-900">編輯員工資料</h3>
@@ -820,7 +926,7 @@ export function TeamManagementView({ currentUser, onRosterUpdated }: TeamManagem
               <button
                 type="button"
                 onClick={() => setEditingEmp(null)}
-                className="p-1.5 text-slate-400 hover:text-slate-700 rounded-lg hover:bg-slate-100 cursor-pointer"
+                className="p-2 text-slate-400 hover:text-slate-700 rounded-lg hover:bg-slate-100 cursor-pointer"
               >
                 <X className="w-4 h-4" />
               </button>
@@ -838,7 +944,7 @@ export function TeamManagementView({ currentUser, onRosterUpdated }: TeamManagem
                   maxLength={16}
                   value={editId}
                   onChange={(e) => setEditId(e.target.value.toUpperCase())}
-                  className="w-full px-3.5 py-2 text-sm font-mono uppercase bg-white border border-slate-300 rounded-lg text-slate-900 focus:outline-none focus:border-teal-700"
+                  className="w-full min-h-[44px] px-3.5 py-2 text-sm font-mono uppercase bg-white border border-slate-300 rounded-xl text-slate-900 focus:outline-none focus:border-teal-700"
                 />
                 <p className="text-[11px] text-slate-500 mt-1">
                   修改編號後，原有排休紀錄會自動保留並轉移至新編號。
@@ -856,7 +962,7 @@ export function TeamManagementView({ currentUser, onRosterUpdated }: TeamManagem
                   maxLength={24}
                   value={editName}
                   onChange={(e) => setEditName(e.target.value)}
-                  className="w-full px-3.5 py-2 text-sm bg-white border border-slate-300 rounded-lg text-slate-900 focus:outline-none focus:border-teal-700"
+                  className="w-full min-h-[44px] px-3.5 py-2 text-sm bg-white border border-slate-300 rounded-xl text-slate-900 focus:outline-none focus:border-teal-700"
                 />
               </div>
 
@@ -869,7 +975,7 @@ export function TeamManagementView({ currentUser, onRosterUpdated }: TeamManagem
                   list="role-suggestions"
                   value={editRole}
                   onChange={(e) => setEditRole(e.target.value)}
-                  className="w-full px-3.5 py-2 text-sm bg-white border border-slate-300 rounded-lg text-slate-900 focus:outline-none focus:border-teal-700"
+                  className="w-full min-h-[44px] px-3.5 py-2 text-sm bg-white border border-slate-300 rounded-xl text-slate-900 focus:outline-none focus:border-teal-700"
                 />
                 <datalist id="role-suggestions">
                   {rolesList.map((r) => (
@@ -885,7 +991,7 @@ export function TeamManagementView({ currentUser, onRosterUpdated }: TeamManagem
                 <select
                   value={editLimit}
                   onChange={(e) => setEditLimit(Number(e.target.value))}
-                  className="w-full px-3.5 py-2 text-sm font-mono bg-white border border-slate-300 rounded-lg text-slate-900 focus:outline-none focus:border-teal-700"
+                  className="w-full min-h-[44px] px-3.5 py-2 text-sm font-mono bg-white border border-slate-300 rounded-xl text-slate-900 focus:outline-none focus:border-teal-700"
                 >
                   <option value={0}>不限</option>
                   <option value={1}>1 天</option>
@@ -900,14 +1006,14 @@ export function TeamManagementView({ currentUser, onRosterUpdated }: TeamManagem
                 <button
                   type="button"
                   onClick={() => setEditingEmp(null)}
-                  className="px-4 py-2 text-sm font-medium text-slate-700 bg-white hover:bg-slate-50 border border-slate-300 rounded-lg cursor-pointer"
+                  className="min-h-[44px] px-4 py-2 text-sm font-medium text-slate-700 bg-white hover:bg-slate-50 border border-slate-300 rounded-xl cursor-pointer"
                 >
                   取消
                 </button>
                 <button
                   type="submit"
                   disabled={savingEmpId === editingEmp.id}
-                  className="px-4 py-2 text-sm font-semibold text-white bg-teal-700 hover:bg-teal-800 rounded-lg cursor-pointer"
+                  className="min-h-[44px] px-5 py-2 text-sm font-semibold text-white bg-teal-700 hover:bg-teal-800 rounded-xl cursor-pointer"
                 >
                   儲存變更
                 </button>

@@ -8,7 +8,8 @@ import type {
 } from '../types.ts';
 import {
   addDaysYMD,
-  formatYMD,
+  formatShortDate,
+  getTaiwanTodayYMD,
   getWeekDays,
   getWeekLockCutoffYMD,
   getWeekStart,
@@ -27,7 +28,7 @@ function createSeedDatabase(): StoreDatabase {
     { id: 'E001', name: '陳小美', role: '正職', isAdmin: false, weeklyLeaveLimit: 2, active: true, createdAt: nowIso },
     { id: 'E002', name: '張家豪', role: '正職', isAdmin: false, weeklyLeaveLimit: 2, active: true, createdAt: nowIso },
     { id: 'PT01', name: '林志豪', role: '工讀生', isAdmin: false, weeklyLeaveLimit: 3, active: true, createdAt: nowIso },
-    { id: 'PT02', name: '王怡君', role: '工讀生', isAdmin: false, weeklyLeaveLimit: 3, active: true, createdAt: nowIso },
+    { id: 'PT02', name: '王怡君', role: '計時員', isAdmin: false, weeklyLeaveLimit: 3, active: true, createdAt: nowIso },
   ];
 
   const seedLeaves: Array<{ empId: string; offset: number }> = [
@@ -55,22 +56,51 @@ function createSeedDatabase(): StoreDatabase {
 
   const settings: StoreSettings = {
     storeName: '日和門市',
-    roles: ['店長', '副店長', '正職', '工讀生', '實習生'],
-    roleDailyLimits: { 正職: 1, 工讀生: 2 },
+    roles: ['店長', '副店長', '正職', '工讀生', '計時員', '實習生'],
+    dailyMaxLeave: 2,
     maxDailyLeaveWarning: 3,
     allowEmployeesViewAll: true,
     showLoginHint: true,
-    lockNextWeekOnWednesday: true,
+    lockNextWeekOnFriday: true,
   };
 
   return { settings, employees, leaves };
+}
+
+function normalizeDb(raw: unknown): StoreDatabase {
+  const parsed = (raw && typeof raw === 'object' ? raw : {}) as Partial<StoreDatabase> & {
+    settings?: Partial<StoreSettings> & { lockNextWeekOnWednesday?: boolean };
+  };
+  const defaults = createSeedDatabase();
+  const s: Partial<StoreSettings> & { lockNextWeekOnWednesday?: boolean } = parsed.settings ?? {};
+  const roles = Array.isArray(s.roles) && s.roles.length > 0 ? s.roles : defaults.settings.roles;
+  if (!roles.includes('計時員')) roles.push('計時員');
+
+  return {
+    settings: {
+      storeName: typeof s.storeName === 'string' && s.storeName.trim() ? s.storeName : defaults.settings.storeName,
+      roles,
+      dailyMaxLeave: typeof s.dailyMaxLeave === 'number' ? Math.max(0, Math.min(20, s.dailyMaxLeave)) : 2,
+      maxDailyLeaveWarning: typeof s.maxDailyLeaveWarning === 'number' ? s.maxDailyLeaveWarning : 3,
+      allowEmployeesViewAll: typeof s.allowEmployeesViewAll === 'boolean' ? s.allowEmployeesViewAll : true,
+      showLoginHint: typeof s.showLoginHint === 'boolean' ? s.showLoginHint : true,
+      lockNextWeekOnFriday:
+        typeof s.lockNextWeekOnFriday === 'boolean'
+          ? s.lockNextWeekOnFriday
+          : typeof s.lockNextWeekOnWednesday === 'boolean'
+            ? s.lockNextWeekOnWednesday
+            : true,
+    },
+    employees: Array.isArray(parsed.employees) ? parsed.employees : defaults.employees,
+    leaves: Array.isArray(parsed.leaves) ? parsed.leaves : [],
+  };
 }
 
 function readDb(): StoreDatabase {
   try {
     const raw = localStorage.getItem(DB_KEY);
     if (raw) {
-      return JSON.parse(raw) as StoreDatabase;
+      return normalizeDb(JSON.parse(raw));
     }
   } catch {
     // Fallback to fresh seed
@@ -175,9 +205,9 @@ export function localFetchSchedule(rawWeekStart: string): ScheduleResponse {
   const user = requireCurrentUser(db);
   const weekStart = getWeekStartFromYMD(rawWeekStart);
   const days = getWeekDays(weekStart);
-  const serverToday = formatYMD(new Date());
+  const serverToday = getTaiwanTodayYMD();
   const lockCutoffDate = getWeekLockCutoffYMD(weekStart);
-  const isWeekLocked = db.settings.lockNextWeekOnWednesday && serverToday >= lockCutoffDate;
+  const isWeekLocked = db.settings.lockNextWeekOnFriday && serverToday >= lockCutoffDate;
   const canViewAll = user.isAdmin || db.settings.allowEmployeesViewAll;
 
   const employees = db.employees
@@ -213,9 +243,9 @@ export function localToggleLeave(payload: {
   }
   const weekStart = getWeekStartFromYMD(payload.date);
   const cutoff = getWeekLockCutoffYMD(weekStart);
-  const today = formatYMD(new Date());
-  if (db.settings.lockNextWeekOnWednesday && !actor.isAdmin && today >= cutoff) {
-    throw new Error('該週已於週三鎖定劃假，如需異動請洽管理員');
+  const today = getTaiwanTodayYMD();
+  if (db.settings.lockNextWeekOnFriday && !actor.isAdmin && today >= cutoff) {
+    throw new Error(`該週已於 ${formatShortDate(cutoff)}（週五 00:00）鎖定劃假，如需異動請洽管理員`);
   }
   const targetEmp = db.employees.find((e) => e.id === targetId && e.active);
   if (!targetEmp) throw new Error('找不到此有效員工編號');
@@ -227,14 +257,16 @@ export function localToggleLeave(payload: {
     return { status: 'removed', entry: null };
   }
 
-  const roleLimit = db.settings.roleDailyLimits?.[targetEmp.role] ?? 0;
-  if (!actor.isAdmin && roleLimit > 0 && existingIdx === -1) {
-    const sameRoleIds = new Set(
-      db.employees.filter((e) => e.active && e.role === targetEmp.role).map((e) => e.id),
-    );
-    const count = db.leaves.filter((l) => l.date === payload.date && sameRoleIds.has(l.employeeId)).length;
-    if (count >= roleLimit) {
-      throw new Error(`「${targetEmp.role}」該日排休名額已滿（每日上限 ${roleLimit} 位）`);
+  const dailyMax = db.settings.dailyMaxLeave ?? 2;
+  if (!actor.isAdmin && dailyMax > 0 && existingIdx === -1) {
+    const activeIdSet = new Set(db.employees.filter((e) => e.active).map((e) => e.id));
+    const dayLeaveCount = db.leaves.filter(
+      (l) => l.date === payload.date && activeIdSet.has(l.employeeId),
+    ).length;
+    if (dayLeaveCount >= dailyMax) {
+      throw new Error(
+        `${formatShortDate(payload.date)} 排休名額已滿（每日全店上限 ${dailyMax} 位，包含正職與計時員；如需新增第 ${dailyMax + 1} 位以上請洽管理員）`,
+      );
     }
   }
 

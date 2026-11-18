@@ -73,8 +73,7 @@ export function MyLeaveView({
   const lockCutoffDate = schedule?.lockCutoffDate ?? getWeekLockCutoffYMD(weekStart);
   const canModifyThisWeek = currentUser.isAdmin || !isWeekLocked;
 
-  const roleDailyLimits = settings?.roleDailyLimits ?? {};
-  const myRoleDailyLimit = roleDailyLimits[currentUser.role] ?? 0;
+  const dailyMaxLeave = settings?.dailyMaxLeave ?? 2;
 
   const thisWeekStart = getWeekStart();
   const nextWeekStart = addDaysYMD(thisWeekStart, 7);
@@ -99,20 +98,27 @@ export function MyLeaveView({
     }
   }
 
+  function scrollToDayCard(date: string) {
+    const el = document.getElementById(`my-day-card-${date}`);
+    if (el) {
+      el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }
+  }
+
   return (
-    <div className="space-y-6">
+    <div className="space-y-4 sm:space-y-6">
       {/* Top Action & Summary Strip */}
-      <div className="bg-white border border-slate-200 rounded-xl p-5 flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
+      <div className="bg-white border border-slate-200 rounded-2xl p-4 sm:p-5 flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
         <div>
-          <div className="flex items-center gap-2 text-xs font-medium text-slate-500">
+          <div className="flex flex-wrap items-center gap-1.5 text-xs font-medium text-slate-500">
             <span>{currentUser.role}</span>
             <span aria-hidden="true">·</span>
             <span className="font-mono tabular-nums">{currentUser.id}</span>
-            {myRoleDailyLimit > 0 && (
+            {dailyMaxLeave > 0 && (
               <>
                 <span aria-hidden="true">·</span>
                 <span className="text-slate-600 tabular-nums">
-                  {currentUser.role}每日限額 {myRoleDailyLimit} 位
+                  每日全店限額 {dailyMaxLeave} 位（正職／計時員合計）
                 </span>
               </>
             )}
@@ -123,7 +129,7 @@ export function MyLeaveView({
               </>
             )}
           </div>
-          <h2 className="text-xl font-bold text-slate-900 mt-1">
+          <h2 className="text-lg sm:text-xl font-bold text-slate-900 mt-1">
             {currentUser.name} 的週排休劃假
           </h2>
           <p className="text-sm text-slate-600 mt-1 tabular-nums">
@@ -139,42 +145,44 @@ export function MyLeaveView({
           </p>
         </div>
 
-        <div className="flex flex-wrap items-center gap-2.5">
-          <div className="inline-flex items-center bg-slate-100 p-1 rounded-lg">
+        <div className="flex flex-col sm:flex-row sm:flex-wrap items-stretch sm:items-center gap-2.5">
+          <div className="inline-flex items-center justify-between bg-slate-100 p-1 rounded-xl">
             <button
               type="button"
               onClick={() => onChangeWeek(addDaysYMD(weekStart, -7))}
-              className="p-2 text-slate-600 hover:text-slate-900 hover:bg-white rounded-md transition-colors cursor-pointer"
+              className="min-w-[40px] min-h-[38px] flex items-center justify-center text-slate-600 hover:text-slate-900 hover:bg-white rounded-lg transition-colors cursor-pointer"
               aria-label="上一週"
             >
               <ChevronLeft className="w-4 h-4" />
             </button>
-            <button
-              type="button"
-              onClick={() => onChangeWeek(thisWeekStart)}
-              className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors cursor-pointer whitespace-nowrap ${
-                weekStart === thisWeekStart
-                  ? 'bg-white text-slate-900 shadow-xs'
-                  : 'text-slate-600 hover:text-slate-900'
-              }`}
-            >
-              本週
-            </button>
-            <button
-              type="button"
-              onClick={() => onChangeWeek(nextWeekStart)}
-              className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors cursor-pointer whitespace-nowrap ${
-                weekStart === nextWeekStart
-                  ? 'bg-white text-slate-900 shadow-xs'
-                  : 'text-slate-600 hover:text-slate-900'
-              }`}
-            >
-              下週
-            </button>
+            <div className="flex items-center gap-1 flex-1 justify-center">
+              <button
+                type="button"
+                onClick={() => onChangeWeek(thisWeekStart)}
+                className={`min-h-[36px] px-3.5 py-1.5 text-xs font-medium rounded-lg transition-colors cursor-pointer whitespace-nowrap ${
+                  weekStart === thisWeekStart
+                    ? 'bg-white text-slate-900 shadow-xs'
+                    : 'text-slate-600 hover:text-slate-900'
+                }`}
+              >
+                本週
+              </button>
+              <button
+                type="button"
+                onClick={() => onChangeWeek(nextWeekStart)}
+                className={`min-h-[36px] px-3.5 py-1.5 text-xs font-medium rounded-lg transition-colors cursor-pointer whitespace-nowrap ${
+                  weekStart === nextWeekStart
+                    ? 'bg-white text-slate-900 shadow-xs'
+                    : 'text-slate-600 hover:text-slate-900'
+                }`}
+              >
+                下週
+              </button>
+            </div>
             <button
               type="button"
               onClick={() => onChangeWeek(addDaysYMD(weekStart, 7))}
-              className="p-2 text-slate-600 hover:text-slate-900 hover:bg-white rounded-md transition-colors cursor-pointer"
+              className="min-w-[40px] min-h-[38px] flex items-center justify-center text-slate-600 hover:text-slate-900 hover:bg-white rounded-lg transition-colors cursor-pointer"
               aria-label="下一週"
             >
               <ChevronRight className="w-4 h-4" />
@@ -184,30 +192,30 @@ export function MyLeaveView({
           <button
             type="button"
             onClick={onGoToOverview}
-            className="inline-flex items-center gap-2 px-4 py-2 bg-teal-700 hover:bg-teal-800 text-white text-sm font-semibold rounded-lg transition-colors cursor-pointer whitespace-nowrap"
+            className="min-h-[44px] inline-flex items-center justify-center gap-2 px-4 py-2 bg-teal-700 hover:bg-teal-800 text-white text-sm font-semibold rounded-xl transition-colors cursor-pointer whitespace-nowrap"
           >
             <Users className="w-4 h-4" />
-            <span>一鍵查看該週劃假情形</span>
+            <span>查看該週劃假總覽</span>
           </button>
         </div>
       </div>
 
-      {/* Wednesday Lock Status Banner */}
-      {settings?.lockNextWeekOnWednesday && (
+      {/* Friday 00:00 Lock Status Banner */}
+      {settings?.lockNextWeekOnFriday && (
         <div
-          className={`rounded-xl px-4 py-3 border flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 text-sm ${
+          className={`rounded-2xl px-4 py-3 border flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 text-sm ${
             isWeekLocked
               ? 'bg-amber-50 border-amber-200 text-amber-900'
               : 'bg-teal-50/70 border-teal-200 text-teal-900'
           }`}
         >
-          <div className="flex items-center gap-2.5">
+          <div className="flex items-start sm:items-center gap-2.5">
             {isWeekLocked ? (
-              <Lock className="w-4 h-4 text-amber-700 shrink-0" />
+              <Lock className="w-4 h-4 text-amber-700 shrink-0 mt-0.5 sm:mt-0" />
             ) : (
-              <CalendarDays className="w-4 h-4 text-teal-700 shrink-0" />
+              <CalendarDays className="w-4 h-4 text-teal-700 shrink-0 mt-0.5 sm:mt-0" />
             )}
-            <span>
+            <span className="leading-relaxed">
               {isWeekLocked ? (
                 currentUser.isAdmin ? (
                   <>
@@ -215,7 +223,7 @@ export function MyLeaveView({
                     <span className="font-mono font-semibold tabular-nums">
                       {formatShortDate(lockCutoffDate)}
                     </span>
-                    （週三）鎖定一般員工編輯，管理員仍可直接調整
+                    （週五 00:00）鎖定一般員工編輯，管理員仍可直接調整
                   </>
                 ) : (
                   <>
@@ -223,7 +231,7 @@ export function MyLeaveView({
                     <span className="font-mono font-semibold tabular-nums">
                       {formatShortDate(lockCutoffDate)}
                     </span>
-                    （週三）鎖定，無法再自行修改，如需異動請洽管理員
+                    （週五 00:00）鎖定，無法再自行修改，如需異動請洽管理員
                   </>
                 )
               ) : (
@@ -232,7 +240,7 @@ export function MyLeaveView({
                   <span className="font-mono font-semibold tabular-nums">
                     {formatShortDate(lockCutoffDate)}
                   </span>
-                  （週三）自動鎖定
+                  （週五 00:00）自動鎖定
                 </>
               )}
             </span>
@@ -242,11 +250,45 @@ export function MyLeaveView({
             <button
               type="button"
               onClick={() => onChangeWeek(suggestedOpenWeekStart)}
-              className="px-3 py-1.5 text-xs font-semibold bg-white hover:bg-amber-100/70 text-amber-900 border border-amber-300 rounded-lg transition-colors cursor-pointer whitespace-nowrap self-start sm:self-auto"
+              className="min-h-[40px] px-3.5 py-1.5 text-xs font-semibold bg-white hover:bg-amber-100/70 text-amber-900 border border-amber-300 rounded-xl transition-colors cursor-pointer whitespace-nowrap self-start sm:self-auto"
             >
               前往開放排休週（{formatShortDate(suggestedOpenWeekStart)} 起）
             </button>
           )}
+        </div>
+      )}
+
+      {/* Mobile 7-Day Quick Jump Strip */}
+      {days.length > 0 && (
+        <div className="grid grid-cols-7 gap-1 md:hidden">
+          {days.map((date, idx) => {
+            const myEntry = myLeavesByDate.get(date);
+            const count = (leavesByDate.get(date) ?? []).length;
+            const isFull = dailyMaxLeave > 0 && count >= dailyMaxLeave;
+            const shortDay = formatWeekdayLabel(idx).replace('週', '');
+            return (
+              <button
+                key={date}
+                type="button"
+                onClick={() => scrollToDayCard(date)}
+                className={`min-h-[54px] rounded-xl border px-1 py-1.5 flex flex-col items-center justify-center gap-0.5 text-center transition-colors cursor-pointer ${
+                  myEntry
+                    ? 'bg-teal-700 border-teal-700 text-white'
+                    : isFull
+                      ? 'bg-amber-50 border-amber-200 text-amber-900'
+                      : 'bg-white border-slate-200 text-slate-700'
+                }`}
+              >
+                <span className="text-[10px] font-medium opacity-80">{shortDay}</span>
+                <span className="text-xs font-mono font-bold tabular-nums">
+                  {formatShortDate(date).split('/')[1]}
+                </span>
+                <span className="text-[10px] font-mono tabular-nums">
+                  {myEntry ? '休' : dailyMaxLeave > 0 ? `${count}/${dailyMaxLeave}` : `${count}人`}
+                </span>
+              </button>
+            );
+          })}
         </div>
       )}
 
@@ -258,13 +300,15 @@ export function MyLeaveView({
         </div>
         <p className="text-xs text-slate-500">
           {canModifyThisWeek
-            ? '點擊日期按鈕即可一鍵劃定排休或取消'
+            ? dailyMaxLeave > 0
+              ? `每日合計最多 ${dailyMaxLeave} 人（含正職與計時員）`
+              : '點擊日期按鈕即可一鍵劃定排休或取消'
             : '此週已鎖定，僅供檢視排休結果'}
         </p>
       </div>
 
       {errorMsg && (
-        <div role="alert" className="text-sm text-red-700 bg-red-50 border border-red-200 rounded-lg px-4 py-3">
+        <div role="alert" className="text-sm text-red-700 bg-red-50 border border-red-200 rounded-xl px-4 py-3">
           {errorMsg}
         </div>
       )}
@@ -273,7 +317,7 @@ export function MyLeaveView({
       {loading && !schedule ? (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-7 gap-3">
           {Array.from({ length: 7 }).map((_, i) => (
-            <div key={i} className="h-52 bg-white border border-slate-200 rounded-xl animate-pulse" />
+            <div key={i} className="h-52 bg-white border border-slate-200 rounded-2xl animate-pulse" />
           ))}
         </div>
       ) : (
@@ -287,17 +331,15 @@ export function MyLeaveView({
             const warningThreshold = settings?.maxDailyLeaveWarning ?? 3;
             const isCrowded = dayLeaves.length > warningThreshold;
 
-            const sameRoleCount = dayLeaves.filter(
-              (l) => employeeMap.get(l.employeeId)?.role === currentUser.role,
-            ).length;
-            const isMyRoleFull =
-              myRoleDailyLimit > 0 && sameRoleCount >= myRoleDailyLimit && !myEntry;
-            const blockedByQuota = !currentUser.isAdmin && isMyRoleFull;
+            const isDayFull = dailyMaxLeave > 0 && dayLeaves.length >= dailyMaxLeave;
+            const isOverCap = dailyMaxLeave > 0 && dayLeaves.length > dailyMaxLeave;
+            const blockedByQuota = !currentUser.isAdmin && isDayFull && !myEntry;
 
             return (
               <div
+                id={`my-day-card-${date}`}
                 key={date}
-                className={`bg-white border rounded-xl p-4 flex flex-col justify-between transition-colors ${
+                className={`bg-white border rounded-2xl p-4 flex flex-col justify-between transition-colors ${
                   myEntry
                     ? 'border-teal-600 ring-1 ring-teal-600/20 bg-teal-50/20'
                     : 'border-slate-200'
@@ -320,7 +362,7 @@ export function MyLeaveView({
                     </div>
 
                     {myEntry ? (
-                      <span className="text-xs font-semibold text-teal-800 bg-teal-100/80 px-2 py-0.5 rounded">
+                      <span className="text-xs font-semibold text-teal-800 bg-teal-100/80 px-2.5 py-0.5 rounded-md">
                         排休
                       </span>
                     ) : (
@@ -328,17 +370,21 @@ export function MyLeaveView({
                     )}
                   </div>
 
-                  {/* Role Daily Quota Indicator */}
-                  {myRoleDailyLimit > 0 && (
+                  {/* Combined Store Daily Quota Indicator */}
+                  {dailyMaxLeave > 0 && (
                     <div
-                      className={`mt-2.5 text-[11px] font-medium tabular-nums flex items-center justify-between ${
-                        sameRoleCount >= myRoleDailyLimit ? 'text-amber-700' : 'text-slate-600'
+                      className={`mt-2.5 text-xs font-medium tabular-nums flex items-center justify-between ${
+                        isOverCap
+                          ? 'text-red-700 font-semibold'
+                          : isDayFull
+                            ? 'text-amber-700 font-semibold'
+                            : 'text-slate-600'
                       }`}
                     >
-                      <span>{currentUser.role}名額</span>
+                      <span>當日排休名額</span>
                       <span className="font-mono">
-                        {sameRoleCount} / {myRoleDailyLimit}
-                        {sameRoleCount >= myRoleDailyLimit ? ' 已滿' : ''}
+                        {dayLeaves.length} / {dailyMaxLeave} 位
+                        {isOverCap ? ' (管理員加開)' : isDayFull ? ' (已滿)' : ''}
                       </span>
                     </div>
                   )}
@@ -378,14 +424,14 @@ export function MyLeaveView({
                 {/* Single 1-click Toggle Action */}
                 <div className="mt-4 pt-3 border-t border-slate-100">
                   {!canModifyThisWeek ? (
-                    <div className="w-full inline-flex items-center justify-center gap-1.5 py-2.5 px-3 text-xs font-medium rounded-lg bg-slate-100 text-slate-500">
+                    <div className="w-full min-h-[44px] inline-flex items-center justify-center gap-1.5 py-2.5 px-3 text-xs font-medium rounded-xl bg-slate-100 text-slate-500">
                       <Lock className="w-3.5 h-3.5" />
                       <span>{myEntry ? '已排休（已鎖定）' : '已鎖定'}</span>
                     </div>
                   ) : blockedByQuota ? (
-                    <div className="w-full inline-flex items-center justify-center gap-1.5 py-2.5 px-3 text-xs font-medium rounded-lg bg-amber-50 text-amber-800 border border-amber-200">
+                    <div className="w-full min-h-[44px] inline-flex items-center justify-center gap-1.5 py-2.5 px-3 text-xs font-medium rounded-xl bg-amber-50 text-amber-800 border border-amber-200 text-center">
                       <span>
-                        {currentUser.role}已滿 ({sameRoleCount}/{myRoleDailyLimit})
+                        名額已滿 ({dayLeaves.length}/{dailyMaxLeave}) · 請洽管理員
                       </span>
                     </div>
                   ) : (
@@ -393,14 +439,24 @@ export function MyLeaveView({
                       type="button"
                       disabled={isBusy}
                       onClick={() => handleQuickToggle(date)}
-                      className={`w-full inline-flex items-center justify-center gap-1.5 py-2.5 px-3 text-xs font-semibold rounded-lg transition-colors cursor-pointer whitespace-nowrap ${
+                      className={`w-full min-h-[44px] inline-flex items-center justify-center gap-1.5 py-2.5 px-3 text-xs font-semibold rounded-xl transition-colors cursor-pointer whitespace-nowrap ${
                         myEntry
                           ? 'bg-teal-700 hover:bg-teal-800 text-white'
-                          : 'bg-slate-900 hover:bg-slate-800 text-white'
+                          : isDayFull && currentUser.isAdmin
+                            ? 'bg-amber-700 hover:bg-amber-800 text-white'
+                            : 'bg-slate-900 hover:bg-slate-800 text-white'
                       }`}
                     >
-                      {myEntry ? <Check className="w-3.5 h-3.5" /> : <Plus className="w-3.5 h-3.5" />}
-                      <span>{isBusy ? '處理中...' : myEntry ? '已排休（點選取消）' : '一鍵排休'}</span>
+                      {myEntry ? <Check className="w-4 h-4" /> : <Plus className="w-4 h-4" />}
+                      <span>
+                        {isBusy
+                          ? '處理中...'
+                          : myEntry
+                            ? '已排休（點選取消）'
+                            : isDayFull && currentUser.isAdmin
+                              ? `管理員加劃（第 ${dayLeaves.length + 1} 位）`
+                              : '一鍵排休'}
+                      </span>
                     </button>
                   )}
                 </div>

@@ -7,6 +7,19 @@ export function formatYMD(date: Date): string {
   return `${y}-${m}-${d}`;
 }
 
+export function getTaiwanTodayYMD(): string {
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Taipei',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).formatToParts(new Date());
+  const y = parts.find((p) => p.type === 'year')?.value ?? '2026';
+  const m = parts.find((p) => p.type === 'month')?.value ?? '01';
+  const d = parts.find((p) => p.type === 'day')?.value ?? '01';
+  return `${y}-${m}-${d}`;
+}
+
 export function parseYMD(ymd: string): Date {
   const [y, m, d] = ymd.split('-').map(Number);
   return new Date(y, m - 1, d);
@@ -38,13 +51,16 @@ export function getWeekDays(weekStartYMD: string): string[] {
 }
 
 /**
- * Preceding Wednesday (Monday - 5 days) when this week locks.
+ * Preceding Friday 00:00 (Monday - 3 days) when this week locks.
  */
 export function getWeekLockCutoffYMD(weekStartYMD: string): string {
-  return addDaysYMD(weekStartYMD, -5);
+  return addDaysYMD(weekStartYMD, -3);
 }
 
-export function isWeekLockedByWednesday(weekStartYMD: string, todayYMD: string = formatYMD(new Date())): boolean {
+export function isWeekLockedByFriday(
+  weekStartYMD: string,
+  todayYMD: string = getTaiwanTodayYMD(),
+): boolean {
   return todayYMD >= getWeekLockCutoffYMD(weekStartYMD);
 }
 
@@ -58,7 +74,7 @@ export function formatWeekdayLabel(index: number): string {
 }
 
 export function isTodayYMD(ymd: string): boolean {
-  return ymd === formatYMD(new Date());
+  return ymd === getTaiwanTodayYMD();
 }
 
 export function formatWeekRangeLabel(weekStartYMD: string): string {

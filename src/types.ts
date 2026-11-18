@@ -19,11 +19,11 @@ export interface LeaveEntry {
 export interface StoreSettings {
   storeName: string;
   roles: string[];
-  roleDailyLimits: Record<string, number>;
+  dailyMaxLeave: number; // Combined daily cap across all roles (default 2; 0 = unlimited; admin can override)
   maxDailyLeaveWarning: number;
   allowEmployeesViewAll: boolean;
   showLoginHint: boolean;
-  lockNextWeekOnWednesday: boolean;
+  lockNextWeekOnFriday: boolean;
 }
 
 export interface StoreDatabase {

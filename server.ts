@@ -1,9 +1,10 @@
 import crypto from 'node:crypto';
+import http from 'node:http';
 import path from 'node:path';
 import express from 'express';
 import type { Request, Response, NextFunction } from 'express';
 import { createServer as createViteServer } from 'vite';
-import { getAuthSecret, mutateStore, readStore } from './server/store.ts';
+import { getAuthSecret, getTaiwanTodayYMD, mutateStore, readStore } from './server/store.ts';
 import type { Employee } from './src/types.ts';
 
 const PORT = Number(process.env.PORT || 3000);
@@ -25,34 +26,30 @@ function isValidYMD(ymd: unknown): ymd is string {
   return typeof ymd === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(ymd);
 }
 
-function formatDateYMD(dt: Date): string {
-  const yy = dt.getFullYear();
-  const mm = String(dt.getMonth() + 1).padStart(2, '0');
-  const dd = String(dt.getDate()).padStart(2, '0');
-  return `${yy}-${mm}-${dd}`;
-}
-
 function addDaysYMD(ymd: string, days: number): string {
   const [y, m, d] = ymd.split('-').map(Number);
-  const dt = new Date(y, m - 1, d + days);
-  return formatDateYMD(dt);
+  const dt = new Date(Date.UTC(y, m - 1, d + days));
+  const yy = dt.getUTCFullYear();
+  const mm = String(dt.getUTCMonth() + 1).padStart(2, '0');
+  const dd = String(dt.getUTCDate()).padStart(2, '0');
+  return `${yy}-${mm}-${dd}`;
 }
 
 function getMondayFromYMD(ymd: string): string {
   const [y, m, d] = ymd.split('-').map(Number);
-  const copy = new Date(y, m - 1, d);
-  const day = copy.getDay();
+  const dt = new Date(Date.UTC(y, m - 1, d));
+  const day = dt.getUTCDay();
   const diff = day === 0 ? -6 : 1 - day;
-  copy.setDate(copy.getDate() + diff);
-  return formatDateYMD(copy);
-}
-
-function getMondayYMD(date: Date = new Date()): string {
-  return getMondayFromYMD(formatDateYMD(date));
+  dt.setUTCDate(dt.getUTCDate() + diff);
+  const yy = dt.getUTCFullYear();
+  const mm = String(dt.getUTCMonth() + 1).padStart(2, '0');
+  const dd = String(dt.getUTCDate()).padStart(2, '0');
+  return `${yy}-${mm}-${dd}`;
 }
 
 function getLockCutoffYMD(weekStartYMD: string): string {
-  return addDaysYMD(weekStartYMD, -5);
+  // Friday 00:00 of the preceding week = Monday - 3 days
+  return addDaysYMD(weekStartYMD, -3);
 }
 
 function formatShortMMDD(ymd: string): string {
@@ -217,14 +214,16 @@ async function startServer(): Promise<void> {
   app.get('/api/schedule', requireAuth, async (req: AuthenticatedRequest, res) => {
     const user = req.currentUser!;
     const rawWeekStart = req.query.weekStart;
-    const weekStart = isValidYMD(rawWeekStart) ? getMondayFromYMD(rawWeekStart) : getMondayYMD();
+    const serverToday = getTaiwanTodayYMD();
+    const weekStart = isValidYMD(rawWeekStart)
+      ? getMondayFromYMD(rawWeekStart)
+      : getMondayFromYMD(serverToday);
     const days = Array.from({ length: 7 }, (_, i) => addDaysYMD(weekStart, i));
     const weekEnd = days[6];
 
     const db = await readStore();
-    const serverToday = formatDateYMD(new Date());
     const lockCutoffDate = getLockCutoffYMD(weekStart);
-    const isWeekLocked = db.settings.lockNextWeekOnWednesday && serverToday >= lockCutoffDate;
+    const isWeekLocked = db.settings.lockNextWeekOnFriday && serverToday >= lockCutoffDate;
     const canViewAll = user.isAdmin || db.settings.allowEmployeesViewAll;
 
     const activeEmployees = db.employees
@@ -251,7 +250,7 @@ async function startServer(): Promise<void> {
     });
   });
 
-  // Toggle off-day (排休) with Wednesday lock & per-role daily cap enforcement
+  // Toggle off-day (排休) with Friday 00:00 lock & combined daily cap (2/day; admin can add 3rd+)
   app.post('/api/leaves/toggle', requireAuth, async (req: AuthenticatedRequest, res) => {
     const actor = req.currentUser!;
     const { date, employeeId: targetRaw, mode } = req.body ?? {};
@@ -269,13 +268,13 @@ async function startServer(): Promise<void> {
 
     const targetWeekStart = getMondayFromYMD(date);
     const lockCutoffDate = getLockCutoffYMD(targetWeekStart);
-    const serverToday = formatDateYMD(new Date());
+    const serverToday = getTaiwanTodayYMD();
 
     try {
       const outcome = await mutateStore((db) => {
-        if (db.settings.lockNextWeekOnWednesday && !actor.isAdmin && serverToday >= lockCutoffDate) {
+        if (db.settings.lockNextWeekOnFriday && !actor.isAdmin && serverToday >= lockCutoffDate) {
           throw new Error(
-            `LOCKED:該週已於 ${formatShortMMDD(lockCutoffDate)}（週三）鎖定劃假，如需異動請洽管理員`,
+            `LOCKED:該週已於 ${formatShortMMDD(lockCutoffDate)}（週五 00:00）鎖定劃假，如需異動請洽管理員`,
           );
         }
 
@@ -294,19 +293,18 @@ async function startServer(): Promise<void> {
           return { status: 'removed' as const, entry: null };
         }
 
-        // Adding or keeping leave: enforce per-role daily quota for non-admin users
-        const roleLimit = db.settings.roleDailyLimits?.[targetEmp.role] ?? 0;
-        if (!actor.isAdmin && roleLimit > 0 && existingIndex === -1) {
-          const sameRoleIds = new Set(
-            db.employees.filter((e) => e.active && e.role === targetEmp.role).map((e) => e.id),
-          );
-          const sameRoleCountOnDate = db.leaves.filter(
-            (l) => l.date === date && sameRoleIds.has(l.employeeId),
+        // Combined daily quota check across all active employees (full-time + part-time)
+        // Regular employees are blocked once dailyMaxLeave is reached; admins can add 3rd+
+        const dailyMax = db.settings.dailyMaxLeave ?? 2;
+        if (!actor.isAdmin && dailyMax > 0 && existingIndex === -1) {
+          const activeIdSet = new Set(db.employees.filter((e) => e.active).map((e) => e.id));
+          const dayLeaveCount = db.leaves.filter(
+            (l) => l.date === date && activeIdSet.has(l.employeeId),
           ).length;
 
-          if (sameRoleCountOnDate >= roleLimit) {
+          if (dayLeaveCount >= dailyMax) {
             throw new Error(
-              `QUOTA:${formatShortMMDD(date)}「${targetEmp.role}」排休名額已滿（每日上限 ${roleLimit} 位）`,
+              `QUOTA:${formatShortMMDD(date)} 排休名額已滿（每日全店上限 ${dailyMax} 位，包含正職與計時員；如需新增第 ${dailyMax + 1} 位以上請洽管理員）`,
             );
           }
         }
@@ -363,7 +361,7 @@ async function startServer(): Promise<void> {
       return;
     }
     if (!role) {
-      res.status(400).json({ error: '請設定員工職位（例如：正職、工讀生）' });
+      res.status(400).json({ error: '請設定員工職位（例如：正職、計時員、工讀生）' });
       return;
     }
 
@@ -394,7 +392,7 @@ async function startServer(): Promise<void> {
     }
   });
 
-  // Admin: update employee (including changing employee ID with leave migration!)
+  // Admin: update employee (including changing employee ID with leave migration)
   app.patch('/api/employees/:id', requireAuth, requireAdmin, async (req: AuthenticatedRequest, res) => {
     const targetId = normalizeEmployeeId(req.params.id);
     const actor = req.currentUser!;
@@ -443,7 +441,6 @@ async function startServer(): Promise<void> {
           throw new Error('系統至少需要保留一位啟用中的管理員');
         }
 
-        // Migrate employee ID & leave references if ID changed
         if (requestedNewId !== targetId) {
           for (const leave of db.leaves) {
             if (leave.employeeId === targetId) {
@@ -532,16 +529,11 @@ async function startServer(): Promise<void> {
             db.settings.roles = cleanRoles;
           }
         }
-        if (req.body?.roleDailyLimits && typeof req.body.roleDailyLimits === 'object') {
-          const nextLimits: Record<string, number> = {};
-          for (const [k, v] of Object.entries(req.body.roleDailyLimits as Record<string, unknown>)) {
-            const roleKey = k.trim().slice(0, 20);
-            const num = Math.max(0, Math.min(20, Number(v) || 0));
-            if (roleKey && num > 0) {
-              nextLimits[roleKey] = num;
-            }
+        if (req.body?.dailyMaxLeave !== undefined) {
+          const parsedMax = Number(req.body.dailyMaxLeave);
+          if (Number.isFinite(parsedMax)) {
+            db.settings.dailyMaxLeave = Math.max(0, Math.min(20, Math.floor(parsedMax)));
           }
-          db.settings.roleDailyLimits = nextLimits;
         }
         if (req.body?.maxDailyLeaveWarning !== undefined) {
           db.settings.maxDailyLeaveWarning = Math.max(
@@ -555,8 +547,8 @@ async function startServer(): Promise<void> {
         if (typeof req.body?.showLoginHint === 'boolean') {
           db.settings.showLoginHint = req.body.showLoginHint;
         }
-        if (typeof req.body?.lockNextWeekOnWednesday === 'boolean') {
-          db.settings.lockNextWeekOnWednesday = req.body.lockNextWeekOnWednesday;
+        if (typeof req.body?.lockNextWeekOnFriday === 'boolean') {
+          db.settings.lockNextWeekOnFriday = req.body.lockNextWeekOnFriday;
         }
         return db.settings;
       });
@@ -567,12 +559,18 @@ async function startServer(): Promise<void> {
     }
   });
 
+  const httpServer = http.createServer(app);
+
   const isProduction =
     process.env.NODE_ENV === 'production' || process.env.npm_lifecycle_event === 'start';
 
   if (!isProduction) {
     const vite = await createViteServer({
-      server: { middlewareMode: true },
+      server: {
+        middlewareMode: true,
+        hmr: process.env.DISABLE_HMR === 'true' ? false : true,
+        ws: { server: httpServer },
+      },
       appType: 'spa',
     });
     app.use(vite.middlewares);
@@ -584,7 +582,7 @@ async function startServer(): Promise<void> {
     });
   }
 
-  app.listen(PORT, '0.0.0.0', () => {
+  httpServer.listen(PORT, '0.0.0.0', () => {
     console.log(`Server running on http://0.0.0.0:${PORT}`);
   });
 }

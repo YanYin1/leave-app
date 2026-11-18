@@ -70,7 +70,8 @@ function getMondayFromYMD(ymd: string): string {
 }
 
 function getLockCutoffYMD(weekStartYMD: string): string {
-  return addDaysYMD(weekStartYMD, -5);
+  // Preceding Friday 00:00 (Monday - 3 days)
+  return addDaysYMD(weekStartYMD, -3);
 }
 
 function formatShortMMDD(ymd: string): string {
@@ -87,7 +88,7 @@ function createInitialDatabase(): StoreDatabase {
     { id: 'E001', name: '陳小美', role: '正職', isAdmin: false, weeklyLeaveLimit: 2, active: true, createdAt: nowIso },
     { id: 'E002', name: '張家豪', role: '正職', isAdmin: false, weeklyLeaveLimit: 2, active: true, createdAt: nowIso },
     { id: 'PT01', name: '林志豪', role: '工讀生', isAdmin: false, weeklyLeaveLimit: 3, active: true, createdAt: nowIso },
-    { id: 'PT02', name: '王怡君', role: '工讀生', isAdmin: false, weeklyLeaveLimit: 3, active: true, createdAt: nowIso },
+    { id: 'PT02', name: '王怡君', role: '計時員', isAdmin: false, weeklyLeaveLimit: 3, active: true, createdAt: nowIso },
   ];
 
   const seedLeaves: Array<{ empId: string; offset: number }> = [
@@ -115,12 +116,12 @@ function createInitialDatabase(): StoreDatabase {
 
   const settings: StoreSettings = {
     storeName: '日和門市',
-    roles: ['店長', '副店長', '正職', '工讀生', '實習生'],
-    roleDailyLimits: { 正職: 1, 工讀生: 2 },
+    roles: ['店長', '副店長', '正職', '工讀生', '計時員', '實習生'],
+    dailyMaxLeave: 2,
     maxDailyLeaveWarning: 3,
     allowEmployeesViewAll: true,
     showLoginHint: true,
-    lockNextWeekOnWednesday: true,
+    lockNextWeekOnFriday: true,
   };
 
   return { settings, employees, leaves };
@@ -133,14 +134,30 @@ async function readStore(kv: KVNamespaceLike): Promise<StoreDatabase> {
     await kv.put(DB_KEY, JSON.stringify(initial));
     return initial;
   }
-  const parsed = JSON.parse(raw) as StoreDatabase;
-  if (!parsed.settings.roleDailyLimits) {
-    parsed.settings.roleDailyLimits = { 正職: 1, 工讀生: 2 };
+  const parsed = JSON.parse(raw) as StoreDatabase & {
+    settings: Partial<StoreSettings> & { lockNextWeekOnWednesday?: boolean };
+  };
+  const defaults = createInitialDatabase();
+  const s = parsed.settings ?? {};
+  const roles = Array.isArray(s.roles) && s.roles.length > 0 ? s.roles : defaults.settings.roles;
+  if (!roles.includes('計時員')) {
+    roles.push('計時員');
   }
-  if (parsed.settings.lockNextWeekOnWednesday === undefined) {
-    parsed.settings.lockNextWeekOnWednesday = true;
-  }
-  return parsed;
+  parsed.settings = {
+    storeName: typeof s.storeName === 'string' && s.storeName.trim() ? s.storeName : defaults.settings.storeName,
+    roles,
+    dailyMaxLeave: typeof s.dailyMaxLeave === 'number' ? Math.max(0, Math.min(20, s.dailyMaxLeave)) : 2,
+    maxDailyLeaveWarning: typeof s.maxDailyLeaveWarning === 'number' ? s.maxDailyLeaveWarning : 3,
+    allowEmployeesViewAll: typeof s.allowEmployeesViewAll === 'boolean' ? s.allowEmployeesViewAll : true,
+    showLoginHint: typeof s.showLoginHint === 'boolean' ? s.showLoginHint : true,
+    lockNextWeekOnFriday:
+      typeof s.lockNextWeekOnFriday === 'boolean'
+        ? s.lockNextWeekOnFriday
+        : typeof s.lockNextWeekOnWednesday === 'boolean'
+          ? s.lockNextWeekOnWednesday
+          : true,
+  };
+  return parsed as StoreDatabase;
 }
 
 async function writeStore(kv: KVNamespaceLike, db: StoreDatabase): Promise<void> {
@@ -355,7 +372,7 @@ export async function handleApiRequest(request: Request, env: WorkerEnv): Promis
       : getMondayFromYMD(serverToday);
     const days = Array.from({ length: 7 }, (_, i) => addDaysYMD(weekStart, i));
     const lockCutoffDate = getLockCutoffYMD(weekStart);
-    const isWeekLocked = db.settings.lockNextWeekOnWednesday && serverToday >= lockCutoffDate;
+    const isWeekLocked = db.settings.lockNextWeekOnFriday && serverToday >= lockCutoffDate;
     const canViewAll = actor.isAdmin || db.settings.allowEmployeesViewAll;
 
     const employees = db.employees
@@ -392,9 +409,9 @@ export async function handleApiRequest(request: Request, env: WorkerEnv): Promis
 
     const serverToday = getTaiwanTodayYMD();
     const lockCutoffDate = getLockCutoffYMD(getMondayFromYMD(date));
-    if (db.settings.lockNextWeekOnWednesday && !actor.isAdmin && serverToday >= lockCutoffDate) {
+    if (db.settings.lockNextWeekOnFriday && !actor.isAdmin && serverToday >= lockCutoffDate) {
       return jsonResponse(
-        { error: `該週已於 ${formatShortMMDD(lockCutoffDate)}（週三）鎖定劃假，如需異動請洽管理員` },
+        { error: `該週已於 ${formatShortMMDD(lockCutoffDate)}（週五 00:00）鎖定劃假，如需異動請洽管理員` },
         403,
       );
     }
@@ -413,15 +430,17 @@ export async function handleApiRequest(request: Request, env: WorkerEnv): Promis
       return jsonResponse({ status: 'removed', entry: null });
     }
 
-    const roleLimit = db.settings.roleDailyLimits?.[targetEmp.role] ?? 0;
-    if (!actor.isAdmin && roleLimit > 0 && existingIdx === -1) {
-      const sameRoleIds = new Set(
-        db.employees.filter((e) => e.active && e.role === targetEmp.role).map((e) => e.id),
-      );
-      const count = db.leaves.filter((l) => l.date === date && sameRoleIds.has(l.employeeId)).length;
-      if (count >= roleLimit) {
+    const dailyMax = db.settings.dailyMaxLeave ?? 2;
+    if (!actor.isAdmin && dailyMax > 0 && existingIdx === -1) {
+      const activeIdSet = new Set(db.employees.filter((e) => e.active).map((e) => e.id));
+      const dayLeaveCount = db.leaves.filter(
+        (l) => l.date === date && activeIdSet.has(l.employeeId),
+      ).length;
+      if (dayLeaveCount >= dailyMax) {
         return jsonResponse(
-          { error: `${formatShortMMDD(date)}「${targetEmp.role}」排休名額已滿（每日上限 ${roleLimit} 位）` },
+          {
+            error: `${formatShortMMDD(date)} 排休名額已滿（每日全店上限 ${dailyMax} 位，包含正職與計時員；如需新增第 ${dailyMax + 1} 位以上請洽管理員）`,
+          },
           409,
         );
       }
@@ -461,7 +480,7 @@ export async function handleApiRequest(request: Request, env: WorkerEnv): Promis
       return jsonResponse({ error: '員工編號需為 2–16 碼英數字（可含 - 或 _）' }, 400);
     }
     if (!name) return jsonResponse({ error: '請輸入員工姓名' }, 400);
-    if (!role) return jsonResponse({ error: '請設定員工職位（例如：正職、工讀生）' }, 400);
+    if (!role) return jsonResponse({ error: '請設定員工職位（例如：正職、計時員、工讀生）' }, 400);
     if (db.employees.some((e) => e.id === id)) {
       return jsonResponse({ error: `員工編號「${id}」已存在，請使用其他編號` }, 400);
     }
@@ -579,14 +598,11 @@ export async function handleApiRequest(request: Request, env: WorkerEnv): Promis
       );
       if (cleanRoles.length > 0) db.settings.roles = cleanRoles;
     }
-    if (body.roleDailyLimits && typeof body.roleDailyLimits === 'object') {
-      const nextLimits: Record<string, number> = {};
-      for (const [k, v] of Object.entries(body.roleDailyLimits as Record<string, unknown>)) {
-        const roleKey = k.trim().slice(0, 20);
-        const num = Math.max(0, Math.min(20, Number(v) || 0));
-        if (roleKey && num > 0) nextLimits[roleKey] = num;
+    if (body.dailyMaxLeave !== undefined) {
+      const parsedMax = Number(body.dailyMaxLeave);
+      if (Number.isFinite(parsedMax)) {
+        db.settings.dailyMaxLeave = Math.max(0, Math.min(20, Math.floor(parsedMax)));
       }
-      db.settings.roleDailyLimits = nextLimits;
     }
     if (body.maxDailyLeaveWarning !== undefined) {
       db.settings.maxDailyLeaveWarning = Math.max(
@@ -600,8 +616,8 @@ export async function handleApiRequest(request: Request, env: WorkerEnv): Promis
     if (typeof body.showLoginHint === 'boolean') {
       db.settings.showLoginHint = body.showLoginHint;
     }
-    if (typeof body.lockNextWeekOnWednesday === 'boolean') {
-      db.settings.lockNextWeekOnWednesday = body.lockNextWeekOnWednesday;
+    if (typeof body.lockNextWeekOnFriday === 'boolean') {
+      db.settings.lockNextWeekOnFriday = body.lockNextWeekOnFriday;
     }
     await writeStore(kv, db);
     return jsonResponse({ settings: db.settings });
