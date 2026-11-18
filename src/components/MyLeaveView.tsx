@@ -110,25 +110,27 @@ export function MyLeaveView({
       {/* Top Action & Summary Strip */}
       <div className="bg-white border border-slate-200 rounded-2xl p-4 sm:p-5 flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
         <div>
-          <div className="flex flex-wrap items-center gap-1.5 text-xs font-medium text-slate-500">
-            <span>{currentUser.role}</span>
-            <span aria-hidden="true">·</span>
-            <span className="font-mono tabular-nums">{currentUser.id}</span>
-            {dailyMaxLeave > 0 && (
-              <>
-                <span aria-hidden="true">·</span>
+          {(currentUser.isAdmin || dailyMaxLeave > 0) && (
+            <div className="flex flex-wrap items-center gap-1.5 text-xs font-medium text-slate-500">
+              {currentUser.isAdmin && (
+                <>
+                  <span className="font-mono tabular-nums">{currentUser.id}</span>
+                  {dailyMaxLeave > 0 && <span aria-hidden="true">·</span>}
+                </>
+              )}
+              {dailyMaxLeave > 0 && (
                 <span className="text-slate-600 tabular-nums">
                   每日全店限額 {dailyMaxLeave} 位（正職／計時員合計）
                 </span>
-              </>
-            )}
-            {currentUser.isAdmin && (
-              <>
-                <span aria-hidden="true">·</span>
-                <span className="text-teal-700 font-semibold">管理員</span>
-              </>
-            )}
-          </div>
+              )}
+              {currentUser.isAdmin && (
+                <>
+                  <span aria-hidden="true">·</span>
+                  <span className="text-teal-700 font-semibold">管理員</span>
+                </>
+              )}
+            </div>
+          )}
           <h2 className="text-lg sm:text-xl font-bold text-slate-900 mt-1">
             {currentUser.name} 的週排休劃假
           </h2>
@@ -408,8 +410,10 @@ export function MyLeaveView({
                             const emp = employeeMap.get(l.employeeId);
                             return (
                               <li key={l.id} className="text-xs text-slate-700 truncate">
-                                <span className="font-medium">{emp?.name ?? l.employeeId}</span>
-                                <span className="text-slate-400"> · {emp?.role ?? ''}</span>
+                                <span className="font-medium">{emp?.name ?? '同事'}</span>
+                                {currentUser.isAdmin && emp?.id && (
+                                  <span className="text-slate-400 font-mono"> · {emp.id}</span>
+                                )}
                               </li>
                             );
                           })}

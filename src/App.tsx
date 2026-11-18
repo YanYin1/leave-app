@@ -179,7 +179,7 @@ export default function App() {
           <div className="flex items-center gap-2 sm:gap-3 shrink-0">
             <PWAInstallButton variant="header" />
             <span className="hidden lg:inline text-xs text-slate-600 whitespace-nowrap">
-              {currentUser.name} · {currentUser.role}
+              {currentUser.isAdmin ? `${currentUser.name} · ${currentUser.id}` : currentUser.name}
             </span>
             <button
               type="button"

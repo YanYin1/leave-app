@@ -44,7 +44,6 @@ export function WeeklyOverviewView({
   onRefresh,
 }: WeeklyOverviewViewProps) {
   const [viewMode, setViewMode] = useState<OverviewMode>('daily-board');
-  const [roleFilter, setRoleFilter] = useState<string>('ALL');
   const [copied, setCopied] = useState(false);
   const [busyKey, setBusyKey] = useState<string | null>(null);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
@@ -60,19 +59,6 @@ export function WeeklyOverviewView({
   const lockCutoffDate = schedule?.lockCutoffDate ?? getWeekLockCutoffYMD(weekStart);
   const dailyMaxLeave = settings?.dailyMaxLeave ?? 2;
 
-  const availableRoles = useMemo(() => {
-    const roles = new Set<string>();
-    for (const emp of allEmployees) {
-      roles.add(emp.role);
-    }
-    return Array.from(roles);
-  }, [allEmployees]);
-
-  const filteredEmployees = useMemo(() => {
-    if (roleFilter === 'ALL') return allEmployees;
-    return allEmployees.filter((e) => e.role === roleFilter);
-  }, [allEmployees, roleFilter]);
-
   const employeeMap = useMemo(() => {
     const map = new Map<string, Employee>();
     for (const emp of allEmployees) {
@@ -80,11 +66,6 @@ export function WeeklyOverviewView({
     }
     return map;
   }, [allEmployees]);
-
-  const filteredEmpIdSet = useMemo(
-    () => new Set(filteredEmployees.map((e) => e.id)),
-    [filteredEmployees],
-  );
 
   const leaveLookup = useMemo(() => {
     const map = new Map<string, LeaveEntry>();
@@ -100,7 +81,6 @@ export function WeeklyOverviewView({
       map.set(day, []);
     }
     for (const l of leaves) {
-      if (!filteredEmpIdSet.has(l.employeeId)) continue;
       const emp = employeeMap.get(l.employeeId);
       if (!emp) continue;
       const arr = map.get(l.date) ?? [];
@@ -108,7 +88,7 @@ export function WeeklyOverviewView({
       map.set(l.date, arr);
     }
     return map;
-  }, [days, leaves, filteredEmpIdSet, employeeMap]);
+  }, [days, leaves, employeeMap]);
 
   // Total active leaves per day across the whole store (independent of role filter)
   const totalLeavesCountByDate = useMemo(() => {
@@ -138,14 +118,12 @@ export function WeeklyOverviewView({
   async function handleCopySummary() {
     if (!days.length) return;
     const storeLabel = settings?.storeName ?? '門市';
-    const header = `【${storeLabel} 週排休總覽】${formatWeekRangeLabel(weekStart)}${
-      roleFilter !== 'ALL' ? `（篩選：${roleFilter}）` : ''
-    }`;
+    const header = `【${storeLabel} 週排休總覽】${formatWeekRangeLabel(weekStart)}`;
     const lines = days.map((day, idx) => {
       const items = leavesByDate.get(day) ?? [];
       const names =
         items.length > 0
-          ? items.map(({ employee }) => `${employee.name}(${employee.role})`).join('、')
+          ? items.map(({ employee }) => employee.name).join('、')
           : '全員出勤';
       return `${formatWeekdayLabel(idx)} ${formatShortDate(day)}：${names}`;
     });
@@ -212,7 +190,7 @@ export function WeeklyOverviewView({
                 {formatWeekRangeLabel(weekStart)}
               </span>
               <span aria-hidden="true">·</span>
-              <span>顯示人數：{filteredEmployees.length} 人</span>
+              <span>顯示人數：{allEmployees.length} 人</span>
               <span aria-hidden="true">·</span>
               <span>本週排休總計：{totalLeavesThisWeek} 人次</span>
               {dailyMaxLeave > 0 && (
@@ -311,51 +289,21 @@ export function WeeklyOverviewView({
           </div>
         </div>
 
-        {/* Role Filter Strip */}
-        <div className="pt-3 border-t border-slate-100 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2.5">
-          <div className="flex items-center gap-1.5 overflow-x-auto pb-1 sm:pb-0">
-            <span className="text-xs font-medium text-slate-500 mr-1 shrink-0">職位：</span>
-            <button
-              type="button"
-              onClick={() => setRoleFilter('ALL')}
-              className={`min-h-[34px] px-3 py-1 text-xs font-medium rounded-lg transition-colors cursor-pointer whitespace-nowrap shrink-0 ${
-                roleFilter === 'ALL'
-                  ? 'bg-slate-900 text-white'
-                  : 'bg-slate-100 text-slate-600 hover:text-slate-900'
-              }`}
-            >
-              全部 ({allEmployees.length})
-            </button>
-            {availableRoles.map((role) => {
-              const count = allEmployees.filter((e) => e.role === role).length;
-              return (
-                <button
-                  key={role}
-                  type="button"
-                  onClick={() => setRoleFilter(role)}
-                  className={`min-h-[34px] px-3 py-1 text-xs font-medium rounded-lg transition-colors cursor-pointer whitespace-nowrap shrink-0 ${
-                    roleFilter === role
-                      ? 'bg-slate-900 text-white'
-                      : 'bg-slate-100 text-slate-600 hover:text-slate-900'
-                  }`}
-                >
-                  {role} ({count})
-                </button>
-              );
-            })}
+        {/* Notice Strip */}
+        {(currentUser.isAdmin || !canSeeOthers) && (
+          <div className="pt-3 border-t border-slate-100 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2.5">
+            {!canSeeOthers && (
+              <span className="text-xs text-amber-700">
+                目前門市設定僅顯示您個人的排休紀錄
+              </span>
+            )}
+            {currentUser.isAdmin && (
+              <span className="text-xs text-slate-500">
+                管理員權限：可不受週五 00:00 鎖定與每日 {dailyMaxLeave > 0 ? dailyMaxLeave : 2} 位上限限制，手動新增第 {(dailyMaxLeave > 0 ? dailyMaxLeave : 2) + 1} 位以上人員
+              </span>
+            )}
           </div>
-
-          {!canSeeOthers && (
-            <span className="text-xs text-amber-700">
-              目前門市設定僅顯示您個人的排休紀錄
-            </span>
-          )}
-          {currentUser.isAdmin && (
-            <span className="text-xs text-slate-500">
-              管理員權限：可不受週五 00:00 鎖定與每日 {dailyMaxLeave > 0 ? dailyMaxLeave : 2} 位上限限制，手動新增第 {(dailyMaxLeave > 0 ? dailyMaxLeave : 2) + 1} 位以上人員
-            </span>
-          )}
-        </div>
+        )}
       </div>
 
       {errorMsg && (
@@ -374,8 +322,8 @@ export function WeeklyOverviewView({
             const allDayCount = totalLeavesCountByDate.get(date) ?? 0;
             const isToday = isTodayYMD(date);
             const isCrowded = allDayCount > warningThreshold;
-            const onDutyCount = Math.max(0, filteredEmployees.length - items.length);
-            const notOffEmployees = filteredEmployees.filter(
+            const onDutyCount = Math.max(0, allEmployees.length - items.length);
+            const notOffEmployees = allEmployees.filter(
               (emp) => !leaveLookup.has(`${emp.id}_${date}`),
             );
 
@@ -461,9 +409,11 @@ export function WeeklyOverviewView({
                                   </span>
                                 )}
                               </div>
-                              <div className="text-[11px] text-slate-500 mt-0.5 truncate">
-                                {employee.role}
-                              </div>
+                              {currentUser.isAdmin && (
+                                <div className="text-[11px] font-mono tabular-nums text-slate-500 mt-0.5 truncate">
+                                  {employee.id}
+                                </div>
+                              )}
                             </div>
 
                             {canEdit && (
@@ -498,7 +448,7 @@ export function WeeklyOverviewView({
                           <option value="">選擇員工...</option>
                           {notOffEmployees.map((emp) => (
                             <option key={emp.id} value={emp.id}>
-                              {emp.name}（{emp.role}）
+                              {emp.name}（{emp.id}）
                             </option>
                           ))}
                         </select>
@@ -555,8 +505,8 @@ export function WeeklyOverviewView({
             <table className="w-full border-collapse text-left">
               <thead>
                 <tr className="border-b border-slate-200 bg-slate-50/80">
-                  <th className="py-3 px-4 text-xs font-semibold text-slate-600 whitespace-nowrap min-w-[155px] sticky left-0 bg-slate-50 z-10 border-r border-slate-200">
-                    員工姓名 · 職位
+                  <th className="py-3 px-4 text-xs font-semibold text-slate-600 whitespace-nowrap min-w-[140px] sticky left-0 bg-slate-50 z-10 border-r border-slate-200">
+                    {currentUser.isAdmin ? '員工姓名 · 編號' : '員工姓名'}
                   </th>
                   {days.map((date, idx) => {
                     const isToday = isTodayYMD(date);
@@ -598,14 +548,14 @@ export function WeeklyOverviewView({
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
-                {filteredEmployees.length === 0 ? (
+                {allEmployees.length === 0 ? (
                   <tr>
                     <td colSpan={9} className="py-10 text-center text-sm text-slate-500">
-                      此職位分類目前沒有在職員工
+                      目前沒有在職員工
                     </td>
                   </tr>
                 ) : (
-                  filteredEmployees.map((emp) => {
+                  allEmployees.map((emp) => {
                     let weekCount = 0;
                     for (const d of days) {
                       if (leaveLookup.has(`${emp.id}_${d}`)) weekCount += 1;
@@ -625,11 +575,11 @@ export function WeeklyOverviewView({
                               <span className="text-[11px] font-medium text-teal-700">我</span>
                             )}
                           </div>
-                          <div className="text-xs text-slate-500 mt-0.5 whitespace-nowrap">
-                            <span>{emp.role}</span>
-                            <span aria-hidden="true"> · </span>
-                            <span className="font-mono tabular-nums">{emp.id}</span>
-                          </div>
+                          {currentUser.isAdmin && (
+                            <div className="text-xs font-mono tabular-nums text-slate-500 mt-0.5 whitespace-nowrap">
+                              {emp.id}
+                            </div>
+                          )}
                         </td>
 
                         {days.map((date) => {
