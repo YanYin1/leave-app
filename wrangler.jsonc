@@ -7,5 +7,11 @@
     "not_found_handling": "single-page-application",
     "binding": "ASSETS",
     "run_worker_first": ["/api/*"]
-  }
+  },
+  "kv_namespaces": [
+    {
+      "binding": "LEAVE_STORE",
+      "id": "e743f4b0fc474b8cbb0dd1827340b2b7"
+    }
+  ]
 }
