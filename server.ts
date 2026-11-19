@@ -4,10 +4,11 @@ import path from 'node:path';
 import express from 'express';
 import type { Request, Response, NextFunction } from 'express';
 import { createServer as createViteServer } from 'vite';
-import { getAuthSecret, getTaiwanTodayYMD, mutateStore, readStore } from './server/store.ts';
+import { getAuthSecret, getTaiwanNow, mutateStore, readStore } from './server/store.ts';
 import type { Employee } from './src/types.ts';
 
 const PORT = Number(process.env.PORT || 3000);
+const WEEKDAY_LABELS = ['週一', '週二', '週三', '週四', '週五', '週六', '週日'];
 
 interface AuthenticatedRequest extends Request {
   currentUser?: Employee;
@@ -47,9 +48,14 @@ function getMondayFromYMD(ymd: string): string {
   return `${yy}-${mm}-${dd}`;
 }
 
-function getLockCutoffYMD(weekStartYMD: string): string {
-  // Friday 00:00 of the preceding week = Monday - 3 days
-  return addDaysYMD(weekStartYMD, -3);
+function getLockCutoffYMD(weekStartYMD: string, lockWeekday = 3): string {
+  const clamped = Math.max(1, Math.min(7, Math.floor(lockWeekday || 3)));
+  return addDaysYMD(weekStartYMD, clamped - 8);
+}
+
+function formatWeekdayLabel(lockWeekday = 3): string {
+  const clamped = Math.max(1, Math.min(7, Math.floor(lockWeekday || 3)));
+  return WEEKDAY_LABELS[clamped - 1] ?? '週三';
 }
 
 function formatShortMMDD(ymd: string): string {
@@ -145,7 +151,6 @@ async function startServer(): Promise<void> {
     });
   });
 
-  // One-time bootstrap endpoint only usable when 0 active admins exist
   app.post('/api/setup/bootstrap-admin', async (req, res) => {
     const id = normalizeEmployeeId(req.body?.id);
     const name = typeof req.body?.name === 'string' ? req.body.name.trim().slice(0, 24) : '';
@@ -214,16 +219,20 @@ async function startServer(): Promise<void> {
   app.get('/api/schedule', requireAuth, async (req: AuthenticatedRequest, res) => {
     const user = req.currentUser!;
     const rawWeekStart = req.query.weekStart;
-    const serverToday = getTaiwanTodayYMD();
+    const { ymd: serverToday, hm: serverNowTime } = getTaiwanNow();
     const weekStart = isValidYMD(rawWeekStart)
       ? getMondayFromYMD(rawWeekStart)
-      : getMondayFromYMD(serverToday);
+      : addDaysYMD(getMondayFromYMD(serverToday), 7);
     const days = Array.from({ length: 7 }, (_, i) => addDaysYMD(weekStart, i));
     const weekEnd = days[6];
 
     const db = await readStore();
-    const lockCutoffDate = getLockCutoffYMD(weekStart);
-    const isWeekLocked = db.settings.lockNextWeekOnFriday && serverToday >= lockCutoffDate;
+    const lockWeekday = db.settings.lockWeekday ?? 3;
+    const lockCutoffTime = db.settings.lockTime ?? '21:30';
+    const lockCutoffDate = getLockCutoffYMD(weekStart, lockWeekday);
+    const isWeekLocked =
+      db.settings.enableWeeklyLock &&
+      `${serverToday} ${serverNowTime}` >= `${lockCutoffDate} ${lockCutoffTime}`;
     const canViewAll = user.isAdmin || db.settings.allowEmployeesViewAll;
 
     const activeEmployees = db.employees
@@ -242,7 +251,9 @@ async function startServer(): Promise<void> {
       weekEnd,
       days,
       serverToday,
+      serverNowTime,
       lockCutoffDate,
+      lockCutoffTime,
       isWeekLocked,
       employees: activeEmployees,
       leaves,
@@ -250,7 +261,7 @@ async function startServer(): Promise<void> {
     });
   });
 
-  // Toggle off-day (排休) with Friday 00:00 lock & combined daily cap (2/day; admin can add 3rd+)
+  // Toggle off-day (排休) with configurable weekday+time lock & combined daily cap
   app.post('/api/leaves/toggle', requireAuth, async (req: AuthenticatedRequest, res) => {
     const actor = req.currentUser!;
     const { date, employeeId: targetRaw, mode } = req.body ?? {};
@@ -267,14 +278,21 @@ async function startServer(): Promise<void> {
     }
 
     const targetWeekStart = getMondayFromYMD(date);
-    const lockCutoffDate = getLockCutoffYMD(targetWeekStart);
-    const serverToday = getTaiwanTodayYMD();
+    const { ymd: serverToday, hm: serverNowTime } = getTaiwanNow();
 
     try {
       const outcome = await mutateStore((db) => {
-        if (db.settings.lockNextWeekOnFriday && !actor.isAdmin && serverToday >= lockCutoffDate) {
+        const lockWeekday = db.settings.lockWeekday ?? 3;
+        const lockTime = db.settings.lockTime ?? '21:30';
+        const lockCutoffDate = getLockCutoffYMD(targetWeekStart, lockWeekday);
+
+        if (
+          db.settings.enableWeeklyLock &&
+          !actor.isAdmin &&
+          `${serverToday} ${serverNowTime}` >= `${lockCutoffDate} ${lockTime}`
+        ) {
           throw new Error(
-            `LOCKED:該週已於 ${formatShortMMDD(lockCutoffDate)}（週五 00:00）鎖定劃假，如需異動請洽管理員`,
+            `LOCKED:該週已於 ${formatShortMMDD(lockCutoffDate)}（${formatWeekdayLabel(lockWeekday)} ${lockTime}）鎖定劃假，如需異動請洽管理員`,
           );
         }
 
@@ -293,8 +311,6 @@ async function startServer(): Promise<void> {
           return { status: 'removed' as const, entry: null };
         }
 
-        // Combined daily quota check across all active employees (full-time + part-time)
-        // Regular employees are blocked once dailyMaxLeave is reached; admins can add 3rd+
         const dailyMax = db.settings.dailyMaxLeave ?? 2;
         if (!actor.isAdmin && dailyMax > 0 && existingIndex === -1) {
           const activeIdSet = new Set(db.employees.filter((e) => e.active).map((e) => e.id));
@@ -392,7 +408,6 @@ async function startServer(): Promise<void> {
     }
   });
 
-  // Admin: update employee (including changing employee ID with leave migration)
   app.patch('/api/employees/:id', requireAuth, requireAdmin, async (req: AuthenticatedRequest, res) => {
     const targetId = normalizeEmployeeId(req.params.id);
     const actor = req.currentUser!;
@@ -547,8 +562,17 @@ async function startServer(): Promise<void> {
         if (typeof req.body?.showLoginHint === 'boolean') {
           db.settings.showLoginHint = req.body.showLoginHint;
         }
-        if (typeof req.body?.lockNextWeekOnFriday === 'boolean') {
-          db.settings.lockNextWeekOnFriday = req.body.lockNextWeekOnFriday;
+        if (typeof req.body?.enableWeeklyLock === 'boolean') {
+          db.settings.enableWeeklyLock = req.body.enableWeeklyLock;
+        }
+        if (req.body?.lockWeekday !== undefined) {
+          const wd = Number(req.body.lockWeekday);
+          if (Number.isFinite(wd) && wd >= 1 && wd <= 7) {
+            db.settings.lockWeekday = Math.floor(wd);
+          }
+        }
+        if (typeof req.body?.lockTime === 'string' && /^([01]\d|2[0-3]):[0-5]\d$/.test(req.body.lockTime)) {
+          db.settings.lockTime = req.body.lockTime;
         }
         return db.settings;
       });

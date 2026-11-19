@@ -8,11 +8,12 @@ import type {
 } from '../types.ts';
 import {
   addDaysYMD,
+  formatLockWeekdayLabel,
   formatShortDate,
-  getTaiwanTodayYMD,
+  getNextWeekStart,
+  getTaiwanNow,
   getWeekDays,
   getWeekLockCutoffYMD,
-  getWeekStart,
   getWeekStartFromYMD,
 } from '../utils/date.ts';
 
@@ -21,7 +22,7 @@ const SESSION_KEY = 'shiftoff_static_session_id';
 
 function createSeedDatabase(): StoreDatabase {
   const nowIso = new Date().toISOString();
-  const mon = getWeekStart();
+  const nextMon = getNextWeekStart();
 
   const employees: Employee[] = [
     { id: 'M001', name: '林店長', role: '店長', isAdmin: true, weeklyLeaveLimit: 2, active: true, createdAt: nowIso },
@@ -44,7 +45,7 @@ function createSeedDatabase(): StoreDatabase {
   ];
 
   const leaves: LeaveEntry[] = seedLeaves.map((item) => {
-    const date = addDaysYMD(mon, item.offset);
+    const date = addDaysYMD(nextMon, item.offset);
     return {
       id: `${item.empId}_${date}`,
       employeeId: item.empId,
@@ -61,18 +62,25 @@ function createSeedDatabase(): StoreDatabase {
     maxDailyLeaveWarning: 3,
     allowEmployeesViewAll: true,
     showLoginHint: true,
-    lockNextWeekOnFriday: true,
+    enableWeeklyLock: true,
+    lockWeekday: 3,
+    lockTime: '21:30',
   };
 
   return { settings, employees, leaves };
 }
 
+type LegacySettings = Partial<StoreSettings> & {
+  lockNextWeekOnFriday?: boolean;
+  lockNextWeekOnWednesday?: boolean;
+};
+
 function normalizeDb(raw: unknown): StoreDatabase {
   const parsed = (raw && typeof raw === 'object' ? raw : {}) as Partial<StoreDatabase> & {
-    settings?: Partial<StoreSettings> & { lockNextWeekOnWednesday?: boolean };
+    settings?: LegacySettings;
   };
   const defaults = createSeedDatabase();
-  const s: Partial<StoreSettings> & { lockNextWeekOnWednesday?: boolean } = parsed.settings ?? {};
+  const s: LegacySettings = parsed.settings ?? {};
   const roles = Array.isArray(s.roles) && s.roles.length > 0 ? s.roles : defaults.settings.roles;
   if (!roles.includes('計時員')) roles.push('計時員');
 
@@ -84,12 +92,22 @@ function normalizeDb(raw: unknown): StoreDatabase {
       maxDailyLeaveWarning: typeof s.maxDailyLeaveWarning === 'number' ? s.maxDailyLeaveWarning : 3,
       allowEmployeesViewAll: typeof s.allowEmployeesViewAll === 'boolean' ? s.allowEmployeesViewAll : true,
       showLoginHint: typeof s.showLoginHint === 'boolean' ? s.showLoginHint : true,
-      lockNextWeekOnFriday:
-        typeof s.lockNextWeekOnFriday === 'boolean'
-          ? s.lockNextWeekOnFriday
-          : typeof s.lockNextWeekOnWednesday === 'boolean'
-            ? s.lockNextWeekOnWednesday
-            : true,
+      enableWeeklyLock:
+        typeof s.enableWeeklyLock === 'boolean'
+          ? s.enableWeeklyLock
+          : typeof s.lockNextWeekOnFriday === 'boolean'
+            ? s.lockNextWeekOnFriday
+            : typeof s.lockNextWeekOnWednesday === 'boolean'
+              ? s.lockNextWeekOnWednesday
+              : true,
+      lockWeekday:
+        typeof s.lockWeekday === 'number' && s.lockWeekday >= 1 && s.lockWeekday <= 7
+          ? Math.floor(s.lockWeekday)
+          : 3,
+      lockTime:
+        typeof s.lockTime === 'string' && /^([01]\d|2[0-3]):[0-5]\d$/.test(s.lockTime)
+          ? s.lockTime
+          : '21:30',
     },
     employees: Array.isArray(parsed.employees) ? parsed.employees : defaults.employees,
     leaves: Array.isArray(parsed.leaves) ? parsed.leaves : [],
@@ -205,9 +223,13 @@ export function localFetchSchedule(rawWeekStart: string): ScheduleResponse {
   const user = requireCurrentUser(db);
   const weekStart = getWeekStartFromYMD(rawWeekStart);
   const days = getWeekDays(weekStart);
-  const serverToday = getTaiwanTodayYMD();
-  const lockCutoffDate = getWeekLockCutoffYMD(weekStart);
-  const isWeekLocked = db.settings.lockNextWeekOnFriday && serverToday >= lockCutoffDate;
+  const { ymd: serverToday, hm: serverNowTime } = getTaiwanNow();
+  const lockWeekday = db.settings.lockWeekday ?? 3;
+  const lockCutoffTime = db.settings.lockTime ?? '21:30';
+  const lockCutoffDate = getWeekLockCutoffYMD(weekStart, lockWeekday);
+  const isWeekLocked =
+    db.settings.enableWeeklyLock &&
+    `${serverToday} ${serverNowTime}` >= `${lockCutoffDate} ${lockCutoffTime}`;
   const canViewAll = user.isAdmin || db.settings.allowEmployeesViewAll;
 
   const employees = db.employees
@@ -222,7 +244,9 @@ export function localFetchSchedule(rawWeekStart: string): ScheduleResponse {
     weekEnd: days[6],
     days,
     serverToday,
+    serverNowTime,
     lockCutoffDate,
+    lockCutoffTime,
     isWeekLocked,
     employees,
     leaves,
@@ -242,10 +266,14 @@ export function localToggleLeave(payload: {
     throw new Error('一般員工僅能修改自己的排休紀錄');
   }
   const weekStart = getWeekStartFromYMD(payload.date);
-  const cutoff = getWeekLockCutoffYMD(weekStart);
-  const today = getTaiwanTodayYMD();
-  if (db.settings.lockNextWeekOnFriday && !actor.isAdmin && today >= cutoff) {
-    throw new Error(`該週已於 ${formatShortDate(cutoff)}（週五 00:00）鎖定劃假，如需異動請洽管理員`);
+  const lockWeekday = db.settings.lockWeekday ?? 3;
+  const lockTime = db.settings.lockTime ?? '21:30';
+  const cutoff = getWeekLockCutoffYMD(weekStart, lockWeekday);
+  const { ymd: today, hm: nowHM } = getTaiwanNow();
+  if (db.settings.enableWeeklyLock && !actor.isAdmin && `${today} ${nowHM}` >= `${cutoff} ${lockTime}`) {
+    throw new Error(
+      `該週已於 ${formatShortDate(cutoff)}（${formatLockWeekdayLabel(lockWeekday)} ${lockTime}）鎖定劃假，如需異動請洽管理員`,
+    );
   }
   const targetEmp = db.employees.find((e) => e.id === targetId && e.active);
   if (!targetEmp) throw new Error('找不到此有效員工編號');

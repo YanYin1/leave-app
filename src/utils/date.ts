@@ -7,17 +7,27 @@ export function formatYMD(date: Date): string {
   return `${y}-${m}-${d}`;
 }
 
-export function getTaiwanTodayYMD(): string {
+export function getTaiwanNow(): { ymd: string; hm: string } {
   const parts = new Intl.DateTimeFormat('en-CA', {
     timeZone: 'Asia/Taipei',
     year: 'numeric',
     month: '2-digit',
     day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    hourCycle: 'h23',
   }).formatToParts(new Date());
   const y = parts.find((p) => p.type === 'year')?.value ?? '2026';
   const m = parts.find((p) => p.type === 'month')?.value ?? '01';
   const d = parts.find((p) => p.type === 'day')?.value ?? '01';
-  return `${y}-${m}-${d}`;
+  let hh = parts.find((p) => p.type === 'hour')?.value ?? '00';
+  if (hh === '24') hh = '00';
+  const mm = parts.find((p) => p.type === 'minute')?.value ?? '00';
+  return { ymd: `${y}-${m}-${d}`, hm: `${hh}:${mm}` };
+}
+
+export function getTaiwanTodayYMD(): string {
+  return getTaiwanNow().ymd;
 }
 
 export function parseYMD(ymd: string): Date {
@@ -28,12 +38,16 @@ export function parseYMD(ymd: string): Date {
 /**
  * Returns Monday (YYYY-MM-DD) of the week containing `date`.
  */
-export function getWeekStart(date: Date = new Date()): string {
+export function getWeekStart(date: Date = parseYMD(getTaiwanTodayYMD())): string {
   const copy = new Date(date.getFullYear(), date.getMonth(), date.getDate());
   const day = copy.getDay(); // 0 = Sun, 1 = Mon ... 6 = Sat
   const diffToMon = day === 0 ? -6 : 1 - day;
   copy.setDate(copy.getDate() + diffToMon);
   return formatYMD(copy);
+}
+
+export function getNextWeekStart(): string {
+  return addDaysYMD(getWeekStart(), 7);
 }
 
 export function getWeekStartFromYMD(ymd: string): string {
@@ -51,17 +65,27 @@ export function getWeekDays(weekStartYMD: string): string[] {
 }
 
 /**
- * Preceding Friday 00:00 (Monday - 3 days) when this week locks.
+ * Preceding week's `lockWeekday` (1 = Mon ... 7 = Sun; default 3 = Wednesday -> Monday - 5 days).
  */
-export function getWeekLockCutoffYMD(weekStartYMD: string): string {
-  return addDaysYMD(weekStartYMD, -3);
+export function getWeekLockCutoffYMD(weekStartYMD: string, lockWeekday = 3): string {
+  const clamped = Math.max(1, Math.min(7, Math.floor(lockWeekday || 3)));
+  return addDaysYMD(weekStartYMD, clamped - 8);
 }
 
-export function isWeekLockedByFriday(
+export function formatLockWeekdayLabel(lockWeekday = 3): string {
+  const clamped = Math.max(1, Math.min(7, Math.floor(lockWeekday || 3)));
+  return WEEKDAY_LABELS[clamped - 1] ?? '週三';
+}
+
+export function isWeekLockedAt(
   weekStartYMD: string,
-  todayYMD: string = getTaiwanTodayYMD(),
+  lockWeekday = 3,
+  lockTime = '21:30',
+  nowYMD: string = getTaiwanNow().ymd,
+  nowHM: string = getTaiwanNow().hm,
 ): boolean {
-  return todayYMD >= getWeekLockCutoffYMD(weekStartYMD);
+  const cutoffYMD = getWeekLockCutoffYMD(weekStartYMD, lockWeekday);
+  return `${nowYMD} ${nowHM}` >= `${cutoffYMD} ${lockTime}`;
 }
 
 export function formatShortDate(ymd: string): string {

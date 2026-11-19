@@ -23,7 +23,9 @@ export interface StoreSettings {
   maxDailyLeaveWarning: number;
   allowEmployeesViewAll: boolean;
   showLoginHint: boolean;
-  lockNextWeekOnFriday: boolean;
+  enableWeeklyLock: boolean;
+  lockWeekday: number; // 1 = Mon ... 7 = Sun of preceding week (default 3 = Wednesday)
+  lockTime: string; // "HH:mm" 24h Taiwan time (default "21:30")
 }
 
 export interface StoreDatabase {
@@ -37,7 +39,9 @@ export interface ScheduleResponse {
   weekEnd: string;
   days: string[];
   serverToday: string;
+  serverNowTime: string;
   lockCutoffDate: string;
+  lockCutoffTime: string;
   isWeekLocked: boolean;
   employees: Employee[];
   leaves: LeaveEntry[];

@@ -8,7 +8,7 @@ import {
   getStoredToken,
   setStoredToken,
 } from './api/client.ts';
-import { getWeekStart } from './utils/date.ts';
+import { getNextWeekStart } from './utils/date.ts';
 import { LoginScreen } from './components/LoginScreen.tsx';
 import { MyLeaveView } from './components/MyLeaveView.tsx';
 import { WeeklyOverviewView } from './components/WeeklyOverviewView.tsx';
@@ -23,7 +23,7 @@ export default function App() {
   const [publicConfig, setPublicConfig] = useState<PublicConfigResponse | null>(null);
   const [currentUser, setCurrentUser] = useState<Employee | null>(null);
   const [activeTab, setActiveTab] = useState<ActiveTab>('overview');
-  const [weekStart, setWeekStart] = useState<string>(() => getWeekStart());
+  const [weekStart, setWeekStart] = useState<string>(() => getNextWeekStart());
   const [schedule, setSchedule] = useState<ScheduleResponse | null>(null);
   const [scheduleLoading, setScheduleLoading] = useState(false);
 

@@ -15,6 +15,7 @@ import {
 import type { Employee, LeaveEntry, ScheduleResponse } from '../types.ts';
 import {
   addDaysYMD,
+  formatLockWeekdayLabel,
   formatShortDate,
   formatWeekdayLabel,
   formatWeekRangeLabel,
@@ -55,8 +56,12 @@ export function WeeklyOverviewView({
   const leaves = useMemo(() => schedule?.leaves ?? [], [schedule]);
   const settings = schedule?.settings;
 
+  const lockWeekday = settings?.lockWeekday ?? 3;
+  const lockTime = schedule?.lockCutoffTime ?? settings?.lockTime ?? '21:30';
+  const lockWeekdayLabel = formatLockWeekdayLabel(lockWeekday);
   const isWeekLocked = schedule?.isWeekLocked ?? false;
-  const lockCutoffDate = schedule?.lockCutoffDate ?? getWeekLockCutoffYMD(weekStart);
+  const lockCutoffDate =
+    schedule?.lockCutoffDate ?? getWeekLockCutoffYMD(weekStart, lockWeekday);
   const dailyMaxLeave = settings?.dailyMaxLeave ?? 2;
 
   const employeeMap = useMemo(() => {
@@ -113,6 +118,7 @@ export function WeeklyOverviewView({
 
   const thisWeekStart = getWeekStart();
   const nextWeekStart = addDaysYMD(thisWeekStart, 7);
+  const nextNextWeekStart = addDaysYMD(thisWeekStart, 14);
   const warningThreshold = settings?.maxDailyLeaveWarning ?? 3;
 
   async function handleCopySummary() {
@@ -169,7 +175,7 @@ export function WeeklyOverviewView({
           <div>
             <div className="flex flex-wrap items-center gap-2">
               <h2 className="text-lg sm:text-xl font-bold text-slate-900">該週劃假總覽</h2>
-              {settings?.lockNextWeekOnFriday && (
+              {settings?.enableWeeklyLock && (
                 <span
                   className={`inline-flex items-center gap-1 text-xs font-medium px-2 py-0.5 rounded-md ${
                     isWeekLocked
@@ -179,8 +185,8 @@ export function WeeklyOverviewView({
                 >
                   {isWeekLocked && <Lock className="w-3 h-3" />}
                   {isWeekLocked
-                    ? `已於 ${formatShortDate(lockCutoffDate)} 週五 00:00 鎖定`
-                    : `開放至 ${formatShortDate(lockCutoffDate)} 週五 00:00 前`}
+                    ? `已於 ${formatShortDate(lockCutoffDate)} ${lockWeekdayLabel} ${lockTime} 鎖定`
+                    : `開放至 ${formatShortDate(lockCutoffDate)} ${lockWeekdayLabel} ${lockTime} 前`}
                 </span>
               )}
             </div>
@@ -216,17 +222,6 @@ export function WeeklyOverviewView({
               <div className="flex items-center gap-1 flex-1 justify-center">
                 <button
                   type="button"
-                  onClick={() => onChangeWeek(thisWeekStart)}
-                  className={`min-h-[36px] px-3.5 py-1.5 text-xs font-medium rounded-lg transition-colors cursor-pointer whitespace-nowrap ${
-                    weekStart === thisWeekStart
-                      ? 'bg-white text-slate-900 shadow-xs'
-                      : 'text-slate-600 hover:text-slate-900'
-                  }`}
-                >
-                  本週
-                </button>
-                <button
-                  type="button"
                   onClick={() => onChangeWeek(nextWeekStart)}
                   className={`min-h-[36px] px-3.5 py-1.5 text-xs font-medium rounded-lg transition-colors cursor-pointer whitespace-nowrap ${
                     weekStart === nextWeekStart
@@ -235,6 +230,17 @@ export function WeeklyOverviewView({
                   }`}
                 >
                   下週
+                </button>
+                <button
+                  type="button"
+                  onClick={() => onChangeWeek(nextNextWeekStart)}
+                  className={`min-h-[36px] px-3.5 py-1.5 text-xs font-medium rounded-lg transition-colors cursor-pointer whitespace-nowrap ${
+                    weekStart === nextNextWeekStart
+                      ? 'bg-white text-slate-900 shadow-xs'
+                      : 'text-slate-600 hover:text-slate-900'
+                  }`}
+                >
+                  下下週
                 </button>
               </div>
               <button
@@ -299,7 +305,9 @@ export function WeeklyOverviewView({
             )}
             {currentUser.isAdmin && (
               <span className="text-xs text-slate-500">
-                管理員權限：可不受週五 00:00 鎖定與每日 {dailyMaxLeave > 0 ? dailyMaxLeave : 2} 位上限限制，手動新增第 {(dailyMaxLeave > 0 ? dailyMaxLeave : 2) + 1} 位以上人員
+                {settings?.enableWeeklyLock
+                  ? `管理員權限：可不受${lockWeekdayLabel} ${lockTime} 鎖定與每日 ${dailyMaxLeave > 0 ? dailyMaxLeave : 2} 位上限限制，手動新增第 ${(dailyMaxLeave > 0 ? dailyMaxLeave : 2) + 1} 位以上人員`
+                  : `管理員權限：可不受每日 ${dailyMaxLeave > 0 ? dailyMaxLeave : 2} 位上限限制，手動新增第 ${(dailyMaxLeave > 0 ? dailyMaxLeave : 2) + 1} 位以上人員`}
               </span>
             )}
           </div>

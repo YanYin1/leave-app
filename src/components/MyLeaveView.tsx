@@ -3,12 +3,15 @@ import { CalendarDays, Check, ChevronLeft, ChevronRight, Lock, Plus, Users } fro
 import type { Employee, LeaveEntry, ScheduleResponse } from '../types.ts';
 import {
   addDaysYMD,
+  formatLockWeekdayLabel,
   formatShortDate,
   formatWeekdayLabel,
   formatWeekRangeLabel,
+  getTaiwanNow,
   getWeekLockCutoffYMD,
   getWeekStart,
   isTodayYMD,
+  isWeekLockedAt,
 } from '../utils/date.ts';
 import { toggleLeave } from '../api/client.ts';
 
@@ -69,8 +72,12 @@ export function MyLeaveView({
 
   const myWeekCount = myLeavesByDate.size;
   const limit = currentUser.weeklyLeaveLimit;
+  const lockWeekday = settings?.lockWeekday ?? 3;
+  const lockTime = schedule?.lockCutoffTime ?? settings?.lockTime ?? '21:30';
+  const lockWeekdayLabel = formatLockWeekdayLabel(lockWeekday);
   const isWeekLocked = schedule?.isWeekLocked ?? false;
-  const lockCutoffDate = schedule?.lockCutoffDate ?? getWeekLockCutoffYMD(weekStart);
+  const lockCutoffDate =
+    schedule?.lockCutoffDate ?? getWeekLockCutoffYMD(weekStart, lockWeekday);
   const canModifyThisWeek = currentUser.isAdmin || !isWeekLocked;
 
   const dailyMaxLeave = settings?.dailyMaxLeave ?? 2;
@@ -78,11 +85,18 @@ export function MyLeaveView({
   const thisWeekStart = getWeekStart();
   const nextWeekStart = addDaysYMD(thisWeekStart, 7);
   const nextNextWeekStart = addDaysYMD(thisWeekStart, 14);
-  const serverToday = schedule?.serverToday;
-  const suggestedOpenWeekStart =
-    serverToday && serverToday >= getWeekLockCutoffYMD(nextWeekStart)
-      ? nextNextWeekStart
-      : nextWeekStart;
+  const taiwanNow = getTaiwanNow();
+  const serverToday = schedule?.serverToday ?? taiwanNow.ymd;
+  const serverNowTime = schedule?.serverNowTime ?? taiwanNow.hm;
+  const suggestedOpenWeekStart = isWeekLockedAt(
+    nextWeekStart,
+    lockWeekday,
+    lockTime,
+    serverToday,
+    serverNowTime,
+  )
+    ? nextNextWeekStart
+    : nextWeekStart;
 
   async function handleQuickToggle(date: string) {
     if (!canModifyThisWeek) return;
@@ -160,17 +174,6 @@ export function MyLeaveView({
             <div className="flex items-center gap-1 flex-1 justify-center">
               <button
                 type="button"
-                onClick={() => onChangeWeek(thisWeekStart)}
-                className={`min-h-[36px] px-3.5 py-1.5 text-xs font-medium rounded-lg transition-colors cursor-pointer whitespace-nowrap ${
-                  weekStart === thisWeekStart
-                    ? 'bg-white text-slate-900 shadow-xs'
-                    : 'text-slate-600 hover:text-slate-900'
-                }`}
-              >
-                本週
-              </button>
-              <button
-                type="button"
                 onClick={() => onChangeWeek(nextWeekStart)}
                 className={`min-h-[36px] px-3.5 py-1.5 text-xs font-medium rounded-lg transition-colors cursor-pointer whitespace-nowrap ${
                   weekStart === nextWeekStart
@@ -179,6 +182,17 @@ export function MyLeaveView({
                 }`}
               >
                 下週
+              </button>
+              <button
+                type="button"
+                onClick={() => onChangeWeek(nextNextWeekStart)}
+                className={`min-h-[36px] px-3.5 py-1.5 text-xs font-medium rounded-lg transition-colors cursor-pointer whitespace-nowrap ${
+                  weekStart === nextNextWeekStart
+                    ? 'bg-white text-slate-900 shadow-xs'
+                    : 'text-slate-600 hover:text-slate-900'
+                }`}
+              >
+                下下週
               </button>
             </div>
             <button
@@ -202,8 +216,8 @@ export function MyLeaveView({
         </div>
       </div>
 
-      {/* Friday 00:00 Lock Status Banner */}
-      {settings?.lockNextWeekOnFriday && (
+      {/* Weekly Lock Status Banner */}
+      {settings?.enableWeeklyLock && (
         <div
           className={`rounded-2xl px-4 py-3 border flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 text-sm ${
             isWeekLocked
@@ -225,7 +239,7 @@ export function MyLeaveView({
                     <span className="font-mono font-semibold tabular-nums">
                       {formatShortDate(lockCutoffDate)}
                     </span>
-                    （週五 00:00）鎖定
+                    （{lockWeekdayLabel} {lockTime}）鎖定
                   </>
                 ) : (
                   <>
@@ -233,7 +247,7 @@ export function MyLeaveView({
                     <span className="font-mono font-semibold tabular-nums">
                       {formatShortDate(lockCutoffDate)}
                     </span>
-                    （週五 00:00）鎖定，無法再自行修改，如需異動請洽管理員
+                    （{lockWeekdayLabel} {lockTime}）鎖定，無法再自行修改，如需異動請洽管理員
                   </>
                 )
               ) : (
@@ -242,7 +256,7 @@ export function MyLeaveView({
                   <span className="font-mono font-semibold tabular-nums">
                     {formatShortDate(lockCutoffDate)}
                   </span>
-                  （週五 00:00）自動鎖定
+                  （{lockWeekdayLabel} {lockTime}）自動鎖定
                 </>
               )}
             </span>

@@ -7,17 +7,27 @@ import type { Employee, LeaveEntry, StoreDatabase, StoreSettings } from '../src/
 const PRIMARY_DATA_DIR = path.resolve(process.cwd(), 'data');
 const FALLBACK_DATA_DIR = path.join(os.tmpdir(), 'shiftoff-data');
 
-export function getTaiwanTodayYMD(): string {
+export function getTaiwanNow(): { ymd: string; hm: string } {
   const parts = new Intl.DateTimeFormat('en-CA', {
     timeZone: 'Asia/Taipei',
     year: 'numeric',
     month: '2-digit',
     day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    hourCycle: 'h23',
   }).formatToParts(new Date());
   const y = parts.find((p) => p.type === 'year')?.value ?? '2026';
   const m = parts.find((p) => p.type === 'month')?.value ?? '01';
   const d = parts.find((p) => p.type === 'day')?.value ?? '01';
-  return `${y}-${m}-${d}`;
+  let hh = parts.find((p) => p.type === 'hour')?.value ?? '00';
+  if (hh === '24') hh = '00';
+  const mm = parts.find((p) => p.type === 'minute')?.value ?? '00';
+  return { ymd: `${y}-${m}-${d}`, hm: `${hh}:${mm}` };
+}
+
+export function getTaiwanTodayYMD(): string {
+  return getTaiwanNow().ymd;
 }
 
 function getMondayFromYMD(ymd: string): string {
@@ -43,7 +53,8 @@ function addDaysYMD(ymd: string, days: number): string {
 
 export function createInitialDatabase(): StoreDatabase {
   const nowIso = new Date().toISOString();
-  const mon = getMondayFromYMD(getTaiwanTodayYMD());
+  // Seed initial sample leaves into next week (Monday + 7 days) so the default next-week view is populated
+  const nextMon = addDaysYMD(getMondayFromYMD(getTaiwanTodayYMD()), 7);
 
   const employees: Employee[] = [
     {
@@ -106,7 +117,7 @@ export function createInitialDatabase(): StoreDatabase {
   ];
 
   const leaves: LeaveEntry[] = seedLeaves.map((item) => {
-    const date = addDaysYMD(mon, item.offset);
+    const date = addDaysYMD(nextMon, item.offset);
     return {
       id: `${item.empId}_${date}`,
       employeeId: item.empId,
@@ -123,7 +134,9 @@ export function createInitialDatabase(): StoreDatabase {
     maxDailyLeaveWarning: 3,
     allowEmployeesViewAll: true,
     showLoginHint: true,
-    lockNextWeekOnFriday: true,
+    enableWeeklyLock: true,
+    lockWeekday: 3, // 週三
+    lockTime: '21:30',
   };
 
   return { settings, employees, leaves };
@@ -180,20 +193,38 @@ export async function getAuthSecret(): Promise<string> {
   return cachedSecret;
 }
 
+type LegacySettings = Partial<StoreSettings> & {
+  lockNextWeekOnFriday?: boolean;
+  lockNextWeekOnWednesday?: boolean;
+};
+
 function normalizeStore(raw: unknown): StoreDatabase {
   const parsed = (raw && typeof raw === 'object' ? raw : {}) as Partial<StoreDatabase> & {
-    settings?: Partial<StoreSettings> & { lockNextWeekOnWednesday?: boolean };
+    settings?: LegacySettings;
   };
   const defaults = createInitialDatabase();
-  const rawSettings: Partial<StoreSettings> & { lockNextWeekOnWednesday?: boolean } =
-    parsed.settings ?? {};
+  const rawSettings: LegacySettings = parsed.settings ?? {};
 
-  const lockNextWeekOnFriday =
-    typeof rawSettings.lockNextWeekOnFriday === 'boolean'
-      ? rawSettings.lockNextWeekOnFriday
-      : typeof rawSettings.lockNextWeekOnWednesday === 'boolean'
-        ? rawSettings.lockNextWeekOnWednesday
-        : true;
+  const enableWeeklyLock =
+    typeof rawSettings.enableWeeklyLock === 'boolean'
+      ? rawSettings.enableWeeklyLock
+      : typeof rawSettings.lockNextWeekOnFriday === 'boolean'
+        ? rawSettings.lockNextWeekOnFriday
+        : typeof rawSettings.lockNextWeekOnWednesday === 'boolean'
+          ? rawSettings.lockNextWeekOnWednesday
+          : true;
+
+  const lockWeekday =
+    typeof rawSettings.lockWeekday === 'number' &&
+    rawSettings.lockWeekday >= 1 &&
+    rawSettings.lockWeekday <= 7
+      ? Math.floor(rawSettings.lockWeekday)
+      : 3;
+
+  const lockTime =
+    typeof rawSettings.lockTime === 'string' && /^([01]\d|2[0-3]):[0-5]\d$/.test(rawSettings.lockTime)
+      ? rawSettings.lockTime
+      : '21:30';
 
   const dailyMaxLeave =
     typeof rawSettings.dailyMaxLeave === 'number' && Number.isFinite(rawSettings.dailyMaxLeave)
@@ -210,7 +241,10 @@ function normalizeStore(raw: unknown): StoreDatabase {
   }
 
   const settings: StoreSettings = {
-    storeName: typeof rawSettings.storeName === 'string' && rawSettings.storeName.trim() ? rawSettings.storeName : defaults.settings.storeName,
+    storeName:
+      typeof rawSettings.storeName === 'string' && rawSettings.storeName.trim()
+        ? rawSettings.storeName
+        : defaults.settings.storeName,
     roles,
     dailyMaxLeave,
     maxDailyLeaveWarning:
@@ -225,7 +259,9 @@ function normalizeStore(raw: unknown): StoreDatabase {
       typeof rawSettings.showLoginHint === 'boolean'
         ? rawSettings.showLoginHint
         : defaults.settings.showLoginHint,
-    lockNextWeekOnFriday,
+    enableWeeklyLock,
+    lockWeekday,
+    lockTime,
   };
 
   return {

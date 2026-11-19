@@ -11,6 +11,7 @@ export interface WorkerEnv {
 
 const DB_KEY = 'store_db_v1';
 const SECRET_KEY = 'auth_secret_v1';
+const WEEKDAY_LABELS = ['週一', '週二', '週三', '週四', '週五', '週六', '週日'];
 
 function jsonResponse(data: unknown, status = 200): Response {
   return new Response(JSON.stringify(data), {
@@ -35,17 +36,23 @@ function isValidYMD(ymd: unknown): ymd is string {
   return typeof ymd === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(ymd);
 }
 
-function getTaiwanTodayYMD(): string {
+function getTaiwanNow(): { ymd: string; hm: string } {
   const parts = new Intl.DateTimeFormat('en-CA', {
     timeZone: 'Asia/Taipei',
     year: 'numeric',
     month: '2-digit',
     day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    hourCycle: 'h23',
   }).formatToParts(new Date());
   const y = parts.find((p) => p.type === 'year')?.value ?? '2026';
   const m = parts.find((p) => p.type === 'month')?.value ?? '01';
   const d = parts.find((p) => p.type === 'day')?.value ?? '01';
-  return `${y}-${m}-${d}`;
+  let hh = parts.find((p) => p.type === 'hour')?.value ?? '00';
+  if (hh === '24') hh = '00';
+  const mm = parts.find((p) => p.type === 'minute')?.value ?? '00';
+  return { ymd: `${y}-${m}-${d}`, hm: `${hh}:${mm}` };
 }
 
 function addDaysYMD(ymd: string, days: number): string {
@@ -69,9 +76,14 @@ function getMondayFromYMD(ymd: string): string {
   return `${yy}-${mm}-${dd}`;
 }
 
-function getLockCutoffYMD(weekStartYMD: string): string {
-  // Preceding Friday 00:00 (Monday - 3 days)
-  return addDaysYMD(weekStartYMD, -3);
+function getLockCutoffYMD(weekStartYMD: string, lockWeekday = 3): string {
+  const clamped = Math.max(1, Math.min(7, Math.floor(lockWeekday || 3)));
+  return addDaysYMD(weekStartYMD, clamped - 8);
+}
+
+function formatWeekdayLabel(lockWeekday = 3): string {
+  const clamped = Math.max(1, Math.min(7, Math.floor(lockWeekday || 3)));
+  return WEEKDAY_LABELS[clamped - 1] ?? '週三';
 }
 
 function formatShortMMDD(ymd: string): string {
@@ -81,7 +93,7 @@ function formatShortMMDD(ymd: string): string {
 
 function createInitialDatabase(): StoreDatabase {
   const nowIso = new Date().toISOString();
-  const mon = getMondayFromYMD(getTaiwanTodayYMD());
+  const nextMon = addDaysYMD(getMondayFromYMD(getTaiwanNow().ymd), 7);
 
   const employees: Employee[] = [
     { id: 'M001', name: '林店長', role: '店長', isAdmin: true, weeklyLeaveLimit: 2, active: true, createdAt: nowIso },
@@ -104,7 +116,7 @@ function createInitialDatabase(): StoreDatabase {
   ];
 
   const leaves: LeaveEntry[] = seedLeaves.map((item) => {
-    const date = addDaysYMD(mon, item.offset);
+    const date = addDaysYMD(nextMon, item.offset);
     return {
       id: `${item.empId}_${date}`,
       employeeId: item.empId,
@@ -121,11 +133,18 @@ function createInitialDatabase(): StoreDatabase {
     maxDailyLeaveWarning: 3,
     allowEmployeesViewAll: true,
     showLoginHint: true,
-    lockNextWeekOnFriday: true,
+    enableWeeklyLock: true,
+    lockWeekday: 3,
+    lockTime: '21:30',
   };
 
   return { settings, employees, leaves };
 }
+
+type LegacySettings = Partial<StoreSettings> & {
+  lockNextWeekOnFriday?: boolean;
+  lockNextWeekOnWednesday?: boolean;
+};
 
 async function readStore(kv: KVNamespaceLike): Promise<StoreDatabase> {
   const raw = await kv.get(DB_KEY);
@@ -135,10 +154,10 @@ async function readStore(kv: KVNamespaceLike): Promise<StoreDatabase> {
     return initial;
   }
   const parsed = JSON.parse(raw) as StoreDatabase & {
-    settings: Partial<StoreSettings> & { lockNextWeekOnWednesday?: boolean };
+    settings?: LegacySettings;
   };
   const defaults = createInitialDatabase();
-  const s = parsed.settings ?? {};
+  const s: LegacySettings = parsed.settings ?? {};
   const roles = Array.isArray(s.roles) && s.roles.length > 0 ? s.roles : defaults.settings.roles;
   if (!roles.includes('計時員')) {
     roles.push('計時員');
@@ -150,12 +169,22 @@ async function readStore(kv: KVNamespaceLike): Promise<StoreDatabase> {
     maxDailyLeaveWarning: typeof s.maxDailyLeaveWarning === 'number' ? s.maxDailyLeaveWarning : 3,
     allowEmployeesViewAll: typeof s.allowEmployeesViewAll === 'boolean' ? s.allowEmployeesViewAll : true,
     showLoginHint: typeof s.showLoginHint === 'boolean' ? s.showLoginHint : true,
-    lockNextWeekOnFriday:
-      typeof s.lockNextWeekOnFriday === 'boolean'
-        ? s.lockNextWeekOnFriday
-        : typeof s.lockNextWeekOnWednesday === 'boolean'
-          ? s.lockNextWeekOnWednesday
-          : true,
+    enableWeeklyLock:
+      typeof s.enableWeeklyLock === 'boolean'
+        ? s.enableWeeklyLock
+        : typeof s.lockNextWeekOnFriday === 'boolean'
+          ? s.lockNextWeekOnFriday
+          : typeof s.lockNextWeekOnWednesday === 'boolean'
+            ? s.lockNextWeekOnWednesday
+            : true,
+    lockWeekday:
+      typeof s.lockWeekday === 'number' && s.lockWeekday >= 1 && s.lockWeekday <= 7
+        ? Math.floor(s.lockWeekday)
+        : 3,
+    lockTime:
+      typeof s.lockTime === 'string' && /^([01]\d|2[0-3]):[0-5]\d$/.test(s.lockTime)
+        ? s.lockTime
+        : '21:30',
   };
   return parsed as StoreDatabase;
 }
@@ -366,13 +395,17 @@ export async function handleApiRequest(request: Request, env: WorkerEnv): Promis
 
   if (path === '/api/schedule' && method === 'GET') {
     const rawWeekStart = url.searchParams.get('weekStart');
-    const serverToday = getTaiwanTodayYMD();
+    const { ymd: serverToday, hm: serverNowTime } = getTaiwanNow();
     const weekStart = isValidYMD(rawWeekStart)
       ? getMondayFromYMD(rawWeekStart)
-      : getMondayFromYMD(serverToday);
+      : addDaysYMD(getMondayFromYMD(serverToday), 7);
     const days = Array.from({ length: 7 }, (_, i) => addDaysYMD(weekStart, i));
-    const lockCutoffDate = getLockCutoffYMD(weekStart);
-    const isWeekLocked = db.settings.lockNextWeekOnFriday && serverToday >= lockCutoffDate;
+    const lockWeekday = db.settings.lockWeekday ?? 3;
+    const lockCutoffTime = db.settings.lockTime ?? '21:30';
+    const lockCutoffDate = getLockCutoffYMD(weekStart, lockWeekday);
+    const isWeekLocked =
+      db.settings.enableWeeklyLock &&
+      `${serverToday} ${serverNowTime}` >= `${lockCutoffDate} ${lockCutoffTime}`;
     const canViewAll = actor.isAdmin || db.settings.allowEmployeesViewAll;
 
     const employees = db.employees
@@ -387,7 +420,9 @@ export async function handleApiRequest(request: Request, env: WorkerEnv): Promis
       weekEnd: days[6],
       days,
       serverToday,
+      serverNowTime,
       lockCutoffDate,
+      lockCutoffTime,
       isWeekLocked,
       employees,
       leaves,
@@ -407,11 +442,20 @@ export async function handleApiRequest(request: Request, env: WorkerEnv): Promis
       return jsonResponse({ error: '一般員工僅能修改自己的排休紀錄' }, 403);
     }
 
-    const serverToday = getTaiwanTodayYMD();
-    const lockCutoffDate = getLockCutoffYMD(getMondayFromYMD(date));
-    if (db.settings.lockNextWeekOnFriday && !actor.isAdmin && serverToday >= lockCutoffDate) {
+    const { ymd: serverToday, hm: serverNowTime } = getTaiwanNow();
+    const lockWeekday = db.settings.lockWeekday ?? 3;
+    const lockTime = db.settings.lockTime ?? '21:30';
+    const lockCutoffDate = getLockCutoffYMD(getMondayFromYMD(date), lockWeekday);
+
+    if (
+      db.settings.enableWeeklyLock &&
+      !actor.isAdmin &&
+      `${serverToday} ${serverNowTime}` >= `${lockCutoffDate} ${lockTime}`
+    ) {
       return jsonResponse(
-        { error: `該週已於 ${formatShortMMDD(lockCutoffDate)}（週五 00:00）鎖定劃假，如需異動請洽管理員` },
+        {
+          error: `該週已於 ${formatShortMMDD(lockCutoffDate)}（${formatWeekdayLabel(lockWeekday)} ${lockTime}）鎖定劃假，如需異動請洽管理員`,
+        },
         403,
       );
     }
@@ -616,8 +660,17 @@ export async function handleApiRequest(request: Request, env: WorkerEnv): Promis
     if (typeof body.showLoginHint === 'boolean') {
       db.settings.showLoginHint = body.showLoginHint;
     }
-    if (typeof body.lockNextWeekOnFriday === 'boolean') {
-      db.settings.lockNextWeekOnFriday = body.lockNextWeekOnFriday;
+    if (typeof body.enableWeeklyLock === 'boolean') {
+      db.settings.enableWeeklyLock = body.enableWeeklyLock;
+    }
+    if (body.lockWeekday !== undefined) {
+      const wd = Number(body.lockWeekday);
+      if (Number.isFinite(wd) && wd >= 1 && wd <= 7) {
+        db.settings.lockWeekday = Math.floor(wd);
+      }
+    }
+    if (typeof body.lockTime === 'string' && /^([01]\d|2[0-3]):[0-5]\d$/.test(body.lockTime)) {
+      db.settings.lockTime = body.lockTime;
     }
     await writeStore(kv, db);
     return jsonResponse({ settings: db.settings });

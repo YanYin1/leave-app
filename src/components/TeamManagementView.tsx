@@ -19,6 +19,7 @@ import {
   updateEmployee,
   updateSettings,
 } from '../api/client.ts';
+import { formatLockWeekdayLabel } from '../utils/date.ts';
 
 interface TeamManagementViewProps {
   currentUser: Employee;
@@ -59,7 +60,9 @@ export function TeamManagementView({ currentUser, onRosterUpdated }: TeamManagem
   const [warningThresholdInput, setWarningThresholdInput] = useState(3);
   const [allowPeerView, setAllowPeerView] = useState(true);
   const [showLoginHint, setShowLoginHint] = useState(true);
-  const [lockOnFriday, setLockOnFriday] = useState(true);
+  const [enableWeeklyLock, setEnableWeeklyLock] = useState(true);
+  const [lockWeekday, setLockWeekday] = useState(3);
+  const [lockTime, setLockTime] = useState('21:30');
   const [newRoleTag, setNewRoleTag] = useState('');
   const [savingSettings, setSavingSettings] = useState(false);
 
@@ -74,7 +77,9 @@ export function TeamManagementView({ currentUser, onRosterUpdated }: TeamManagem
       setWarningThresholdInput(data.settings.maxDailyLeaveWarning);
       setAllowPeerView(data.settings.allowEmployeesViewAll);
       setShowLoginHint(data.settings.showLoginHint);
-      setLockOnFriday(data.settings.lockNextWeekOnFriday ?? true);
+      setEnableWeeklyLock(data.settings.enableWeeklyLock ?? true);
+      setLockWeekday(data.settings.lockWeekday ?? 3);
+      setLockTime(data.settings.lockTime ?? '21:30');
       if (data.settings.roles.length > 0 && !data.settings.roles.includes(newRole)) {
         setNewRole(data.settings.roles[0]);
       }
@@ -239,7 +244,9 @@ export function TeamManagementView({ currentUser, onRosterUpdated }: TeamManagem
         maxDailyLeaveWarning: warningThresholdInput,
         allowEmployeesViewAll: allowPeerView,
         showLoginHint,
-        lockNextWeekOnFriday: lockOnFriday,
+        enableWeeklyLock,
+        lockWeekday,
+        lockTime,
       });
       await loadData();
       await onRosterUpdated();
@@ -813,15 +820,68 @@ export function TeamManagementView({ currentUser, onRosterUpdated }: TeamManagem
             </div>
 
             <div className="space-y-3 pt-1">
-              <label className="flex items-start gap-2.5 text-sm text-slate-800 cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={lockOnFriday}
-                  onChange={(e) => setLockOnFriday(e.target.checked)}
-                  className="w-4 h-4 mt-0.5 rounded border-slate-300 text-teal-700 focus:ring-teal-600"
-                />
-                <span>每週五 00:00 自動鎖定下週劃假（一般員工無法自行異動，管理員仍可調整）</span>
-              </label>
+              <div className="rounded-xl border border-slate-200 bg-slate-50/70 p-3.5 space-y-3">
+                <label className="flex items-start gap-2.5 text-sm text-slate-800 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={enableWeeklyLock}
+                    onChange={(e) => setEnableWeeklyLock(e.target.checked)}
+                    className="w-4 h-4 mt-0.5 rounded border-slate-300 text-teal-700 focus:ring-teal-600"
+                  />
+                  <span className="font-medium">
+                    啟用每週自動鎖定下週劃假（一般員工無法自行異動，管理員仍可調整）
+                  </span>
+                </label>
+
+                {enableWeeklyLock && (
+                  <div className="pl-6 space-y-2.5">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      <div>
+                        <label
+                          htmlFor="lock-weekday-select"
+                          className="block text-xs font-semibold text-slate-700 mb-1"
+                        >
+                          鎖定星期（前一週）
+                        </label>
+                        <select
+                          id="lock-weekday-select"
+                          value={lockWeekday}
+                          onChange={(e) => setLockWeekday(Number(e.target.value))}
+                          className="w-full min-h-[44px] px-3 py-2 text-sm bg-white border border-slate-300 rounded-xl text-slate-900 focus:outline-none focus:border-teal-700"
+                        >
+                          <option value={1}>上週一</option>
+                          <option value={2}>上週二</option>
+                          <option value={3}>上週三（預設）</option>
+                          <option value={4}>上週四</option>
+                          <option value={5}>上週五</option>
+                          <option value={6}>上週六</option>
+                          <option value={7}>上週日</option>
+                        </select>
+                      </div>
+
+                      <div>
+                        <label
+                          htmlFor="lock-time-input"
+                          className="block text-xs font-semibold text-slate-700 mb-1"
+                        >
+                          鎖定時間（24 小時制）
+                        </label>
+                        <input
+                          id="lock-time-input"
+                          type="time"
+                          required
+                          value={lockTime}
+                          onChange={(e) => setLockTime(e.target.value || '21:30')}
+                          className="w-full min-h-[44px] px-3 py-2 text-sm font-mono tabular-nums bg-white border border-slate-300 rounded-xl text-slate-900 focus:outline-none focus:border-teal-700"
+                        />
+                      </div>
+                    </div>
+                    <p className="text-[11px] text-slate-600 tabular-nums">
+                      目前設定：每{formatLockWeekdayLabel(lockWeekday)} {lockTime} 後鎖定下週班表（台灣時間）
+                    </p>
+                  </div>
+                )}
+              </div>
 
               <label className="flex items-start gap-2.5 text-sm text-slate-800 cursor-pointer">
                 <input
