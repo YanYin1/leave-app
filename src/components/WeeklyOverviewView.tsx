@@ -2,13 +2,14 @@ import { useMemo, useState } from 'react';
 import {
   AlertTriangle,
   CalendarDays,
-  Check,
   ChevronLeft,
   ChevronRight,
-  Copy,
+  Download,
+  ImageDown,
   LayoutGrid,
   Lock,
   Plus,
+  Share2,
   Table2,
   X,
 } from 'lucide-react';
@@ -23,6 +24,10 @@ import {
   getWeekStart,
   isTodayYMD,
 } from '../utils/date.ts';
+import {
+  generateScheduleImage,
+  type ExportedScheduleImage,
+} from '../utils/exportScheduleImage.ts';
 import { toggleLeave } from '../api/client.ts';
 
 interface WeeklyOverviewViewProps {
@@ -45,7 +50,8 @@ export function WeeklyOverviewView({
   onRefresh,
 }: WeeklyOverviewViewProps) {
   const [viewMode, setViewMode] = useState<OverviewMode>('daily-board');
-  const [copied, setCopied] = useState(false);
+  const [exportingImage, setExportingImage] = useState(false);
+  const [exportedImage, setExportedImage] = useState<ExportedScheduleImage | null>(null);
   const [busyKey, setBusyKey] = useState<string | null>(null);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [adminAddDay, setAdminAddDay] = useState<string | null>(null);
@@ -121,26 +127,68 @@ export function WeeklyOverviewView({
   const nextNextWeekStart = addDaysYMD(thisWeekStart, 14);
   const warningThreshold = settings?.maxDailyLeaveWarning ?? 3;
 
-  async function handleCopySummary() {
-    if (!days.length) return;
-    const storeLabel = settings?.storeName ?? '門市';
-    const header = `【${storeLabel} 週排休總覽】${formatWeekRangeLabel(weekStart)}`;
-    const lines = days.map((day, idx) => {
-      const items = leavesByDate.get(day) ?? [];
-      const names =
-        items.length > 0
-          ? items.map(({ employee }) => employee.name).join('、')
-          : '全員出勤';
-      return `${formatWeekdayLabel(idx)} ${formatShortDate(day)}：${names}`;
-    });
+  function triggerImageDownload(dataUrl: string, filename: string) {
+    const link = document.createElement('a');
+    link.href = dataUrl;
+    link.download = filename;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  }
 
-    const text = `${header}\n${lines.join('\n')}`;
+  async function handleExportImage() {
+    if (!days.length || exportingImage) return;
+    setExportingImage(true);
+    setErrorMsg(null);
     try {
-      await navigator.clipboard.writeText(text);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
-    } catch {
-      setErrorMsg('瀏覽器無法自動存取剪貼簿，請手動選取內容複製');
+      const lockStatusText = settings?.enableWeeklyLock
+        ? isWeekLocked
+          ? `已於 ${formatShortDate(lockCutoffDate)} ${lockWeekdayLabel} ${lockTime} 鎖定`
+          : `開放至 ${formatShortDate(lockCutoffDate)} ${lockWeekdayLabel} ${lockTime} 前`
+        : undefined;
+
+      const result = await generateScheduleImage({
+        storeName: settings?.storeName ?? '門市',
+        weekStart,
+        days,
+        employees: allEmployees,
+        leavesByDate,
+        totalLeavesThisWeek,
+        dailyMaxLeave,
+        isWeekLocked,
+        lockStatusText,
+      });
+
+      setExportedImage(result);
+      triggerImageDownload(result.dataUrl, result.filename);
+    } catch (err) {
+      setErrorMsg(err instanceof Error ? err.message : '匯出當週休假圖片失敗，請稍後再試');
+    } finally {
+      setExportingImage(false);
+    }
+  }
+
+  async function handleShareExportedImage() {
+    if (!exportedImage) return;
+    try {
+      const file = new File([exportedImage.blob], exportedImage.filename, {
+        type: 'image/png',
+      });
+      if (
+        typeof navigator !== 'undefined' &&
+        typeof navigator.canShare === 'function' &&
+        navigator.canShare({ files: [file] })
+      ) {
+        await navigator.share({
+          files: [file],
+          title: `${settings?.storeName ?? '門市'} 週排休表（${formatWeekRangeLabel(weekStart)}）`,
+        });
+        return;
+      }
+      triggerImageDownload(exportedImage.dataUrl, exportedImage.filename);
+    } catch (err) {
+      if (err instanceof Error && err.name === 'AbortError') return;
+      triggerImageDownload(exportedImage.dataUrl, exportedImage.filename);
     }
   }
 
@@ -282,14 +330,15 @@ export function WeeklyOverviewView({
                 </button>
               </div>
 
-              {/* One-Click Copy Summary */}
+              {/* One-Click Export Weekly Leave Image */}
               <button
                 type="button"
-                onClick={handleCopySummary}
-                className="min-h-[44px] inline-flex items-center justify-center gap-1.5 px-3.5 py-2 text-xs font-semibold text-slate-800 bg-white hover:bg-slate-50 border border-slate-300 rounded-xl transition-colors cursor-pointer whitespace-nowrap"
+                disabled={exportingImage || !days.length}
+                onClick={handleExportImage}
+                className="min-h-[44px] inline-flex items-center justify-center gap-1.5 px-3.5 py-2 text-xs font-semibold text-slate-800 bg-white hover:bg-slate-50 disabled:opacity-60 border border-slate-300 rounded-xl transition-colors cursor-pointer whitespace-nowrap"
               >
-                {copied ? <Check className="w-3.5 h-3.5 text-teal-700" /> : <Copy className="w-3.5 h-3.5" />}
-                <span>{copied ? '已複製' : '複製名單'}</span>
+                <ImageDown className="w-3.5 h-3.5 text-teal-700" />
+                <span>{exportingImage ? '產生中...' : '匯出休假圖片'}</span>
               </button>
             </div>
           </div>
@@ -656,6 +705,71 @@ export function WeeklyOverviewView({
                 )}
               </tbody>
             </table>
+          </div>
+        </div>
+      )}
+
+      {/* Exported Weekly Schedule Image Preview & Download Modal */}
+      {exportedImage && (
+        <div
+          className="fixed inset-0 z-50 bg-slate-900/50 backdrop-blur-[1px] flex items-end sm:items-center justify-center p-0 sm:p-4"
+          role="dialog"
+          aria-modal="true"
+          aria-label="當週休假圖片預覽"
+        >
+          <div className="bg-white border border-slate-200 rounded-t-2xl sm:rounded-2xl w-full max-w-2xl max-h-[92dvh] flex flex-col shadow-xl pb-[env(safe-area-inset-bottom)]">
+            <div className="px-5 py-4 border-b border-slate-100 flex items-center justify-between gap-3 shrink-0">
+              <div>
+                <h3 className="text-base font-semibold text-slate-900">當週休假圖片</h3>
+                <p className="text-xs text-slate-500 mt-0.5">
+                  已產生高解析度 PNG 圖片，手機可長按圖片儲存或點選下方下載／分享
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setExportedImage(null)}
+                className="p-2 text-slate-400 hover:text-slate-700 rounded-lg hover:bg-slate-100 cursor-pointer shrink-0"
+                aria-label="關閉預覽"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="p-4 overflow-y-auto bg-slate-100/80 flex-1 flex justify-center">
+              <img
+                src={exportedImage.dataUrl}
+                alt={`${settings?.storeName ?? '門市'} ${formatWeekRangeLabel(weekStart)} 週排休表`}
+                className="w-full max-w-lg h-auto rounded-xl border border-slate-200 shadow-xs object-contain bg-white"
+              />
+            </div>
+
+            <div className="px-5 py-3.5 border-t border-slate-100 flex flex-wrap items-center justify-end gap-2 bg-white shrink-0">
+              <button
+                type="button"
+                onClick={() => setExportedImage(null)}
+                className="min-h-[44px] px-4 py-2 text-sm font-medium text-slate-700 bg-white hover:bg-slate-50 border border-slate-300 rounded-xl cursor-pointer"
+              >
+                關閉
+              </button>
+              {typeof navigator !== 'undefined' && typeof navigator.share === 'function' && (
+                <button
+                  type="button"
+                  onClick={handleShareExportedImage}
+                  className="min-h-[44px] inline-flex items-center gap-1.5 px-4 py-2 text-sm font-semibold text-slate-800 bg-slate-100 hover:bg-slate-200 rounded-xl cursor-pointer"
+                >
+                  <Share2 className="w-4 h-4" />
+                  <span>分享圖片</span>
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={() => triggerImageDownload(exportedImage.dataUrl, exportedImage.filename)}
+                className="min-h-[44px] inline-flex items-center gap-1.5 px-4 py-2 text-sm font-semibold text-white bg-teal-700 hover:bg-teal-800 rounded-xl cursor-pointer"
+              >
+                <Download className="w-4 h-4" />
+                <span>下載圖片 (PNG)</span>
+              </button>
+            </div>
           </div>
         </div>
       )}
